@@ -1,0 +1,154 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 530" width="1000" height="530" role="img" aria-label="CC2530 终端节点板引脚分配图">
+  <g font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif">
+
+    <!-- ==================== P0 端口 ==================== -->
+    <rect x="30" y="70" width="300" height="360" rx="12" fill="#ffffff" stroke="#e2e8f0" stroke-width="1.5"/>
+    <rect x="30" y="70" width="300" height="40" rx="12" fill="#e0f2fe"/>
+    <rect x="30" y="98" width="300" height="12" fill="#e0f2fe"/>
+    <text x="48" y="96" font-size="14" font-weight="700" fill="#075985">P0 端口</text>
+    <text x="312" y="96" text-anchor="end" font-size="11" fill="#0c4a6e" opacity="0.7">8 个引脚</text>
+
+    <g font-size="12.5">
+      <!-- P0_0 -->
+      <rect x="31" y="111" width="298" height="40" fill="#ffffff"/>
+      <text x="48" y="136" font-family="Consolas, monospace" font-size="12.5" font-weight="700" fill="#0f172a">P0_0</text>
+      <text x="112" y="136" fill="#475569">蜂鸣器</text>
+      <circle cx="306" cy="131" r="5" fill="#059669"/>
+      <!-- P0_1 -->
+      <rect x="31" y="151" width="298" height="40" fill="#fafbfc"/>
+      <text x="48" y="176" font-family="Consolas, monospace" font-size="12.5" font-weight="700" fill="#0f172a">P0_1</text>
+      <text x="112" y="176" fill="#475569">按键（待确认）</text>
+      <circle cx="306" cy="171" r="5" fill="#d97706"/>
+      <!-- P0_2 -->
+      <rect x="31" y="191" width="298" height="40" fill="#ffffff"/>
+      <text x="48" y="216" font-family="Consolas, monospace" font-size="12.5" font-weight="700" fill="#0f172a">P0_2</text>
+      <text x="112" y="216" fill="#475569">UART0 RX → CH340</text>
+      <circle cx="306" cy="211" r="5" fill="#7c3aed"/>
+      <!-- P0_3 -->
+      <rect x="31" y="231" width="298" height="40" fill="#fafbfc"/>
+      <text x="48" y="256" font-family="Consolas, monospace" font-size="12.5" font-weight="700" fill="#0f172a">P0_3</text>
+      <text x="112" y="256" fill="#475569">UART0 TX → CH340</text>
+      <circle cx="306" cy="251" r="5" fill="#7c3aed"/>
+      <!-- P0_4 -->
+      <rect x="31" y="271" width="298" height="40" fill="#ffffff"/>
+      <text x="48" y="296" font-family="Consolas, monospace" font-size="12.5" font-weight="700" fill="#0f172a">P0_4</text>
+      <text x="112" y="296" fill="#475569">DHT11 单总线</text>
+      <circle cx="306" cy="291" r="5" fill="#0284c7"/>
+      <!-- P0_5 -->
+      <rect x="31" y="311" width="298" height="40" fill="#fafbfc"/>
+      <text x="48" y="336" font-family="Consolas, monospace" font-size="12.5" font-weight="700" fill="#0f172a">P0_5</text>
+      <text x="112" y="336" fill="#475569">人体红外（高=有人）</text>
+      <circle cx="306" cy="331" r="5" fill="#0284c7"/>
+      <!-- P0_6 -->
+      <rect x="31" y="351" width="298" height="40" fill="#ffffff"/>
+      <text x="48" y="376" font-family="Consolas, monospace" font-size="12.5" font-weight="700" fill="#0f172a">P0_6</text>
+      <text x="112" y="376" fill="#475569">光敏电阻 · ADC ch6</text>
+      <circle cx="306" cy="371" r="5" fill="#0284c7"/>
+      <!-- P0_7 -->
+      <rect x="31" y="391" width="298" height="40" rx="0" fill="#fafbfc"/>
+      <text x="48" y="416" font-family="Consolas, monospace" font-size="12.5" font-weight="700" fill="#0f172a">P0_7</text>
+      <text x="112" y="416" fill="#475569">MQ-2 烟雾 · ADC ch7</text>
+      <circle cx="306" cy="411" r="5" fill="#0284c7"/>
+    </g>
+
+    <!-- ==================== P1 端口 ==================== -->
+    <rect x="350" y="70" width="300" height="360" rx="12" fill="#ffffff" stroke="#e2e8f0" stroke-width="1.5"/>
+    <rect x="350" y="70" width="300" height="40" rx="12" fill="#dcfce7"/>
+    <rect x="350" y="98" width="300" height="12" fill="#dcfce7"/>
+    <text x="368" y="96" font-size="14" font-weight="700" fill="#166534">P1 端口</text>
+    <text x="632" y="96" text-anchor="end" font-size="11" fill="#14532d" opacity="0.7">输出为主</text>
+
+    <g font-size="12.5">
+      <rect x="351" y="111" width="298" height="40" fill="#ffffff"/>
+      <text x="368" y="136" font-family="Consolas, monospace" font-size="12.5" font-weight="700" fill="#0f172a">P1_0</text>
+      <text x="432" y="136" fill="#475569">LED1（高电平亮）</text>
+      <circle cx="626" cy="131" r="5" fill="#059669"/>
+
+      <rect x="351" y="151" width="298" height="40" fill="#fafbfc"/>
+      <text x="368" y="176" font-family="Consolas, monospace" font-size="12.5" font-weight="700" fill="#0f172a">P1_1</text>
+      <text x="432" y="176" fill="#475569">LED2（高电平亮）</text>
+      <circle cx="626" cy="171" r="5" fill="#059669"/>
+
+      <rect x="351" y="191" width="298" height="40" fill="#ffffff"/>
+      <text x="368" y="216" font-family="Consolas, monospace" font-size="12.5" font-weight="700" fill="#0f172a">P1_2</text>
+      <text x="432" y="216" fill="#cbd5e1">未使用</text>
+
+      <rect x="351" y="231" width="298" height="40" fill="#fafbfc"/>
+      <text x="368" y="256" font-family="Consolas, monospace" font-size="12.5" font-weight="700" fill="#0f172a">P1_3</text>
+      <text x="432" y="256" fill="#475569">继电器（低电平吸合）</text>
+      <circle cx="626" cy="251" r="5" fill="#059669"/>
+
+      <rect x="351" y="271" width="298" height="40" fill="#ffffff"/>
+      <text x="368" y="296" font-family="Consolas, monospace" font-size="12.5" font-weight="700" fill="#0f172a">P1_4</text>
+      <text x="432" y="296" fill="#475569">LED3（高电平亮）</text>
+      <circle cx="626" cy="291" r="5" fill="#059669"/>
+
+      <rect x="351" y="311" width="298" height="40" fill="#fafbfc"/>
+      <text x="368" y="336" font-family="Consolas, monospace" font-size="12.5" font-weight="700" fill="#0f172a">P1_5</text>
+      <text x="432" y="336" fill="#cbd5e1">未使用</text>
+
+      <rect x="351" y="351" width="298" height="40" fill="#ffffff"/>
+      <text x="368" y="376" font-family="Consolas, monospace" font-size="12.5" font-weight="700" fill="#cbd5e1">P1_6</text>
+      <text x="432" y="376" fill="#cbd5e1">未使用</text>
+
+      <rect x="351" y="391" width="298" height="40" fill="#fafbfc"/>
+      <text x="368" y="416" font-family="Consolas, monospace" font-size="12.5" font-weight="700" fill="#cbd5e1">P1_7</text>
+      <text x="432" y="416" fill="#cbd5e1">未使用</text>
+    </g>
+
+    <!-- ==================== P2 端口 ==================== -->
+    <rect x="670" y="70" width="300" height="360" rx="12" fill="#ffffff" stroke="#e2e8f0" stroke-width="1.5"/>
+    <rect x="670" y="70" width="300" height="40" rx="12" fill="#fef3c7"/>
+    <rect x="670" y="98" width="300" height="12" fill="#fef3c7"/>
+    <text x="688" y="96" font-size="14" font-weight="700" fill="#92400e">P2 端口</text>
+    <text x="952" y="96" text-anchor="end" font-size="11" fill="#78350f" opacity="0.7">调试 / 电源</text>
+
+    <g font-size="12.5">
+      <rect x="671" y="111" width="298" height="40" fill="#ffffff"/>
+      <text x="688" y="136" font-family="Consolas, monospace" font-size="12.5" font-weight="700" fill="#0f172a">P2_1</text>
+      <text x="752" y="136" fill="#475569">调试数据 DD</text>
+      <circle cx="946" cy="131" r="5" fill="#94a3b8"/>
+
+      <rect x="671" y="151" width="298" height="40" fill="#fafbfc"/>
+      <text x="688" y="176" font-family="Consolas, monospace" font-size="12.5" font-weight="700" fill="#0f172a">P2_2</text>
+      <text x="752" y="176" fill="#475569">调试时钟 DC</text>
+      <circle cx="946" cy="171" r="5" fill="#94a3b8"/>
+
+      <rect x="671" y="191" width="298" height="40" fill="#ffffff"/>
+      <text x="688" y="216" font-family="Consolas, monospace" font-size="12.5" font-weight="700" fill="#0f172a">RESET_N</text>
+      <text x="752" y="216" fill="#475569">复位（低有效）</text>
+    </g>
+
+    <!-- P2 卡片里的说明块 -->
+    <rect x="686" y="248" width="268" height="166" rx="8" fill="#fffbeb" stroke="#fde68a" stroke-width="1"/>
+    <text x="702" y="272" font-size="12" font-weight="700" fill="#92400e">传感器脚不能设成输出</text>
+    <text x="702" y="294" font-size="11.5" fill="#78350f">P0_4 / P0_5 / P0_6 / P0_7 四个脚</text>
+    <text x="702" y="313" font-size="11.5" fill="#78350f">接的是传感器。一旦被设成输出：</text>
+    <text x="702" y="336" font-size="11.5" fill="#78350f">· DHT11 读不出数</text>
+    <text x="702" y="355" font-size="11.5" fill="#78350f">· 光敏 / 烟雾 ADC 短路到地</text>
+    <text x="702" y="378" font-size="11.5" fill="#78350f">· 严重时损坏引脚</text>
+    <text x="702" y="401" font-size="11.5" font-weight="600" fill="#b45309">本项目只把 P0_0 和 P1_x 设成输出</text>
+
+    <!-- ==================== 图例 ==================== -->
+    <g font-size="12" fill="#475569">
+      <circle cx="46" cy="466" r="5" fill="#0284c7"/>
+      <text x="58" y="470">传感器输入</text>
+
+      <circle cx="166" cy="466" r="5" fill="#059669"/>
+      <text x="178" y="470">输出执行</text>
+
+      <circle cx="286" cy="466" r="5" fill="#7c3aed"/>
+      <text x="298" y="470">串口通信</text>
+
+      <circle cx="406" cy="466" r="5" fill="#d97706"/>
+      <text x="418" y="470">待确认</text>
+
+      <circle cx="506" cy="466" r="5" fill="#94a3b8"/>
+      <text x="518" y="470">调试接口</text>
+    </g>
+
+    <text x="500" y="505" text-anchor="middle" font-size="11.5" fill="#94a3b8">
+      引脚依据：课程原版工程 Z-Stack 2.5.1a 中 beep.c / led.c / relay.c / Gas.c / light.c / Human_Body_infrared.c / dht11.C 逐条核对
+    </text>
+  </g>
+</svg>
