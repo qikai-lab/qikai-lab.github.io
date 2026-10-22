@@ -1,0 +1,395 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>终端节点板引脚速查表 · ZigBee 环境监测系统</title>
+<meta name="author" content="qikai-lab">
+<link rel="canonical" href="https://qikai-lab.github.io/posts/pinout-reference.html">
+<meta property="og:type" content="article">
+<meta property="og:site_name" content="ZigBee 无线环境监测系统 · 开发手记">
+<meta property="og:url" content="https://qikai-lab.github.io/posts/pinout-reference.html">
+<meta name="description" content="CC2530 终端节点板引脚分配、ADC 通道切换方法、三条铁律，以及错误引脚表的来源分析。">
+<link rel="stylesheet" href="../assets/css/style.css">
+</head>
+<body>
+
+<header class="site-header">
+  <nav class="nav">
+    <a class="brand" href="../index.html">
+      <span class="brand-mark">ZB</span>
+      <span>ZigBee 环境监测系统</span>
+    </a>
+    <div class="nav-links">
+      <a href="../index.html">首页</a>
+      <a href="project-overview.html">项目全景</a>
+      <a href="week0-bringup.html">开发日志</a>
+      <a href="pinout-reference.html" class="active">引脚速查</a>
+    </div>
+  </nav>
+</header>
+
+<main class="wrap">
+
+  <div class="post-header">
+    <div class="breadcrumb"><a href="../index.html">首页</a> / 引脚速查</div>
+    <h1>终端节点板引脚速查表</h1>
+    <div class="post-meta">
+      <span>2026-10-22</span>
+      <span class="dot">·</span>
+      <span class="tag accent">参考资料</span>
+      <span class="tag">硬件</span>
+      <span class="tag">P0/P1</span>
+    </div>
+  </div>
+
+  <article class="prose">
+
+    <p>
+      这份表是从<strong>课程原版工程源码</strong>里逐条核对出来的——不是从原理图导出物里猜的。
+      每条都有对应的源文件作为依据，可以直接查证。
+    </p>
+
+    <figure>
+      <img src="../assets/img/pinmap.svg" alt="CC2530 终端节点板引脚分配图">
+      <figcaption>图 1　P0 / P1 / P2 端口分配，颜色表示引脚类型</figcaption>
+    </figure>
+
+    <h2 id="table">一、完整引脚表</h2>
+
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>功能</th>
+            <th>引脚</th>
+            <th>方向 / 电平</th>
+            <th>源码依据</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><strong>蜂鸣器</strong></td>
+            <td><code>P0_0</code></td>
+            <td>输出，<strong>高电平响</strong></td>
+            <td><code>beep.c</code>：<code>P0DIR |= 0x01</code></td>
+          </tr>
+          <tr>
+            <td>按键（待确认）</td>
+            <td><code>P0_1</code></td>
+            <td>输入</td>
+            <td>源码中无按键驱动，按常见接法推测</td>
+          </tr>
+          <tr>
+            <td><strong>UART0 RX</strong></td>
+            <td><code>P0_2</code></td>
+            <td>外设功能</td>
+            <td>板载 CH340G</td>
+          </tr>
+          <tr>
+            <td><strong>UART0 TX</strong></td>
+            <td><code>P0_3</code></td>
+            <td>外设功能</td>
+            <td>板载 CH340G</td>
+          </tr>
+          <tr>
+            <td><strong>DHT11</strong></td>
+            <td><code>P0_4</code></td>
+            <td>单总线双向</td>
+            <td><code>dht11.C</code>：<code>DATA_PIN</code></td>
+          </tr>
+          <tr>
+            <td><strong>人体红外</strong></td>
+            <td><code>P0_5</code></td>
+            <td>输入，<strong>高电平 = 有人</strong></td>
+            <td><code>Human_Body_infrared.c</code></td>
+          </tr>
+          <tr>
+            <td><strong>光敏电阻</strong></td>
+            <td><code>P0_6</code></td>
+            <td>模拟输入，<strong>ADC 通道 6</strong></td>
+            <td><code>light.c</code>：<code>ADCCON3 = 0x86</code></td>
+          </tr>
+          <tr>
+            <td><strong>MQ-2 烟雾</strong></td>
+            <td><code>P0_7</code></td>
+            <td>模拟输入，<strong>ADC 通道 7</strong></td>
+            <td><code>Gas.c</code>：<code>ADCCON3 = 0x87</code></td>
+          </tr>
+          <tr>
+            <td>LED1</td>
+            <td><code>P1_0</code></td>
+            <td>输出，<strong>高电平点亮</strong></td>
+            <td><code>led.c</code>：<code>LedOn()</code> 写 1</td>
+          </tr>
+          <tr>
+            <td>LED2</td>
+            <td><code>P1_1</code></td>
+            <td>输出，高电平点亮</td>
+            <td><code>led.c</code></td>
+          </tr>
+          <tr>
+            <td><strong>继电器</strong></td>
+            <td><code>P1_3</code></td>
+            <td>输出，<strong>低电平吸合</strong></td>
+            <td><code>relay.c</code>：<code>RelayOn()</code> 写 0</td>
+          </tr>
+          <tr>
+            <td>LED3</td>
+            <td><code>P1_4</code></td>
+            <td>输出，高电平点亮</td>
+            <td><code>led.c</code></td>
+          </tr>
+          <tr>
+            <td>调试数据</td>
+            <td><code>P2_1</code></td>
+            <td>调试接口</td>
+            <td>CC2530 DD</td>
+          </tr>
+          <tr>
+            <td>调试时钟</td>
+            <td><code>P2_2</code></td>
+            <td>调试接口</td>
+            <td>CC2530 DC</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h2 id="adc">二、两个模拟量怎么读</h2>
+
+    <p>
+      光敏和烟雾共用同一个 ADC 模块，靠 <code>ADCCON3</code> 的低 4 位切换通道。
+      官方写法是这样的（<code>light.c</code>，光敏通道 6）：
+    </p>
+
+    <pre><code><span class="k">uint16</span> <span class="f">myApp_ReadLightLevel</span>(<span class="k">void</span>)
+{
+    <span class="k">uint16</span> reading;
+
+    <span class="c">/* 使能通道：ADCCFG 的 bit6 对应 P0_6 作模拟输入 */</span>
+    ADCCFG |= <span class="n">0x40</span>;
+
+    <span class="c">/* 写这个寄存器即启动一次转换 */</span>
+    ADCCON3 = <span class="n">0x86</span>;
+
+    <span class="c">/* 等转换完成（bit7 = EOC） */</span>
+    <span class="k">while</span> (!(ADCCON1 &amp; <span class="n">0x80</span>));
+
+    <span class="c">/* 转换完关掉通道 */</span>
+    ADCCFG &amp;= (<span class="n">0x40</span> ^ <span class="n">0xFF</span>);
+
+    reading = ADCL;
+    reading |= (<span class="k">int16</span>)(ADCH &lt;&lt; <span class="n">8</span>);
+    reading &gt;&gt;= <span class="n">8</span>;
+    <span class="k">return</span> reading;
+}</code></pre>
+
+    <p>烟雾模块只差三个地方：</p>
+
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr><th>项目</th><th>光敏（P0_6）</th><th>烟雾（P0_7）</th></tr>
+        </thead>
+        <tbody>
+          <tr><td><code>ADCCFG</code> 掩码</td><td><code>0x40</code></td><td><code>0x80</code></td></tr>
+          <tr><td><code>ADCCON3</code> 取值</td><td><code>0x86</code></td><td><code>0x87</code></td></tr>
+          <tr><td>通道号（低 4 位）</td><td>6</td><td>7</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="callout warn">
+      <div class="callout-icon">!</div>
+      <div class="callout-body">
+        <strong>最容易漏的一步：<code>ADCCFG</code> 必须先置位。</strong><br>
+        CC2530 的 GPIO 默认是数字模式。<code>ADCCFG</code> 每一位对应 <code>P0</code> 的一个脚，
+        置 1 才把该脚切换成模拟输入。只写 <code>ADCCON3</code> 而忘了 <code>ADCCFG</code>，
+        读出来会是一个固定值或跳变噪声，很容易误判成「传感器坏了」。
+      </div>
+    </div>
+
+    <h3>关于精度</h3>
+
+    <p>
+      上面这段是官方写法：把 <code>ADCH</code> 左移 8 位后再整体右移 8 位，等价于
+      <strong>只取结果的高 8 位</strong>。CC2530 的 ADC 是 12 位，但官方驱动用了 8 位精度，
+      对光照和烟雾这种趋势量够用。
+    </p>
+
+    <p>
+      如果需要 12 位精度，读法应该是 <code>(ADCH &lt;&lt; 6) | (ADCL &gt;&gt; 2)</code>——
+      但注意 <code>ADCL</code> 的低 2 位是无效位。两种读法不要混用。
+    </p>
+
+    <h3>参考电压与抽取率</h3>
+
+    <p><code>ADCCON3 = 0x86</code> 拆开看：</p>
+
+    <pre><code>0x86 = 1000 0110
+       ││││ └┴┴┴─ ECH  = 6     通道 6（P0_6）
+       ││└┴─────── EDIV = 00    64 抽取率
+       └┴───────── EREF = 10    内部参考 AVDD5</code></pre>
+
+    <p>
+      <code>EREF=10</code> 表示用 AVDD5（3.3V）做参考。
+      所以 8 位读数 <code>v</code> 对应的电压约是 <code>v / 255 × 3.3V</code>。
+      需要更高精度可以改 <code>EREF</code> 到内部 1.25V 基准，或提高抽取率换更稳的值。
+    </p>
+
+    <h2 id="rules">三、三条铁律</h2>
+
+    <div class="callout danger">
+      <div class="callout-icon">×</div>
+      <div class="callout-body">
+        <strong>铁律 1：<code>P0_4 / P0_5 / P0_6 / P0_7</code> 绝对不能设成输出。</strong><br>
+        这四个脚接着传感器。设成输出会：<br>
+        · <code>P0_4</code> 单总线被强驱，DHT11 再也读不出数据<br>
+        · <code>P0_6 / P0_7</code> 模拟输入被短路到地，ADC 读数变成 0<br>
+        · 严重时倒灌电流损坏引脚
+      </div>
+    </div>
+
+    <div class="callout warn">
+      <div class="callout-icon">!</div>
+      <div class="callout-body">
+        <strong>铁律 2：所有外设的极性要核对，不要凭「通常习惯」猜。</strong><br>
+        这块板三种极性各不相同：蜂鸣器<strong>高电平响</strong>、LED <strong>高电平亮</strong>、
+        继电器<strong>低电平吸合</strong>。搞反了不报错，只是「按了没反应」。
+      </div>
+    </div>
+
+    <div class="callout info">
+      <div class="callout-icon">i</div>
+      <div class="callout-body">
+        <strong>铁律 3：<code>P2_1 / P2_2</code> 是调试口，不要占用。</strong><br>
+        这两个脚接 CC-Debugger。程序里如果把它们复用成普通 IO，会直接导致下载器连不上芯片，
+        而且下次烧录必须靠复位时序抢时间才能救回来。
+      </div>
+    </div>
+
+    <h2 id="init">四、推荐的初始化顺序</h2>
+
+    <p>
+      顺序不是随便排的。蜂鸣器那个坑决定了它必须排在最前面：
+    </p>
+
+    <pre><code><span class="k">void</span> <span class="f">main</span>(<span class="k">void</span>)
+{
+    <span class="f">clock_init</span>();      <span class="c">/* 1. 时钟，后面所有时序都依赖它 */</span>
+    <span class="f">beeper_init</span>();     <span class="c">/* 2. ★ 蜂鸣器静音，必须尽早 */</span>
+    <span class="f">uart0_init</span>();      <span class="c">/* 3. 串口，方便后面打调试信息 */</span>
+    <span class="f">led_init</span>();        <span class="c">/* 4. LED 全灭 */</span>
+    <span class="f">sensor_init</span>();     <span class="c">/* 5. 传感器脚设成输入，配 ADCCFG */</span>
+    <span class="f">relay_init</span>();      <span class="c">/* 6. 继电器断开，避免上电误动作 */</span>
+}</code></pre>
+
+    <p>每一步的理由：</p>
+
+    <ul>
+      <li><strong>时钟第一</strong>：DHT11 时序要求微秒级精度，时钟不对后面全乱</li>
+      <li><strong>蜂鸣器第二</strong>：复位后弱上拉会让它长鸣，越早拉低越好</li>
+      <li><strong>串口第三</strong>：后面每一步都能打日志，出问题好定位</li>
+      <li><strong>继电器最后</strong>：上电瞬间 GPIO 状态不确定，先确保它处于断开状态，防止带着负载上电</li>
+    </ul>
+
+    <h2 id="wrong">五、为什么之前那份表是错的</h2>
+
+    <p>
+      最早我手上只有原理图 PDF，就用工具提取里面的网络标号，整理出一份引脚表。
+      结果是：
+    </p>
+
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr><th>功能</th><th>从 PDF 提取（错）</th><th>源码实际（对）</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>蜂鸣器</td><td><s>P0_6</s></td><td><strong>P0_0</strong></td></tr>
+          <tr><td>人体红外</td><td><s>P0_4</s></td><td><strong>P0_5</strong></td></tr>
+          <tr><td>光敏</td><td><s>P1_1</s></td><td><strong>P0_6</strong></td></tr>
+          <tr><td>MQ-2</td><td><s>P0_0</s></td><td><strong>P0_7</strong></td></tr>
+          <tr><td>继电器</td><td><s>P0_5</s></td><td><strong>P1_3</strong></td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <p><strong>五个全错，而且是「错位式」的错</strong>——看起来像是整体串了一位。</p>
+
+    <h3>错在哪</h3>
+
+    <p>
+      原理图是分块画的，同一个网络标号会在多个区域出现（MCU 符号旁、连接器旁、传感器模块旁）。
+      自动提取时按出现顺序配对，一旦某个区域多一个或少一个标号，后面全部错位。
+    </p>
+
+    <p>
+      更麻烦的是，这种错误<strong>不会立刻暴露</strong>：把蜂鸣器写成 P0_6，代码能编译、能烧录、
+      板子也不报错，只是「改完没效果」。你会怀疑极性、怀疑电路、怀疑代码，
+      但很难怀疑到「表本身就是错的」这一层。
+    </p>
+
+    <h3>正确的验证方法</h3>
+
+    <p>三条，按可靠性排序：</p>
+
+    <ol>
+      <li><strong>能跑的源码 &gt; 原理图导出物</strong>。源码里 <code>#define BEEP_PIN P0_0</code> 是编译过、烧录过、验证过的事实</li>
+      <li><strong>手册寄存器表 &gt; 猜</strong>。CC2530 datasheet 里有每个脚的复用功能表</li>
+      <li><strong>实测最可靠</strong>：写个程序把某个脚设成输出翻转，用万用表量对应器件有没有反应</li>
+    </ol>
+
+    <blockquote>
+      <p>
+        原理图描述「设计意图」，源码描述「实际能工作的东西」。<br>
+        两者冲突时，后者赢。
+      </p>
+    </blockquote>
+
+    <h2 id="todo">六、还没确认的</h2>
+
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr><th>项目</th><th>状态</th><th>怎么确认</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>按键引脚</td>
+            <td><span class="tag warn">待确认</span></td>
+            <td>源码里没有按键驱动。<code>P0_1</code> 是按常见接法推测的，第 1 步用原理图核对</td>
+          </tr>
+          <tr>
+            <td>1.44" 彩屏引脚</td>
+            <td><span class="tag warn">待确认</span></td>
+            <td>SPI 接口，具体片选/数据/时钟脚需要看彩屏模块的排线定义</td>
+          </tr>
+          <tr>
+            <td>电位器</td>
+            <td><span class="tag warn">待确认</span></td>
+            <td>大概率也是某个 ADC 通道，第 1 步一并确认</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="post-footer">
+      <a class="btn" href="../index.html">← 返回首页</a>
+      <a class="btn btn-primary" href="week0-bringup.html">第 0 周开发日志 →</a>
+    </div>
+
+  </article>
+
+</main>
+
+<footer class="site-footer">
+  <div class="wrap-wide">
+    <span>ZigBee 无线环境监测系统 · 开发手记 · by qikai-lab</span>
+    <span>最近更新：2026-10-22</span>
+  </div>
+</footer>
+
+</body>
+</html>
