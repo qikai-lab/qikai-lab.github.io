@@ -1,0 +1,408 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>项目全景：这个系统到底长什么样 · ZigBee 环境监测系统</title>
+<meta name="author" content="qikai-lab">
+<link rel="canonical" href="https://qikai-lab.github.io/posts/project-overview.html">
+<meta property="og:type" content="article">
+<meta property="og:site_name" content="ZigBee 无线环境监测系统 · 开发手记">
+<meta property="og:url" content="https://qikai-lab.github.io/posts/project-overview.html">
+<meta name="description" content="四层架构、六个可演示功能、五步实施路线，以及为什么砍掉了另外三个候选方案。">
+<link rel="stylesheet" href="../assets/css/style.css">
+</head>
+<body>
+
+<header class="site-header">
+  <nav class="nav">
+    <a class="brand" href="../index.html">
+      <span class="brand-mark">ZB</span>
+      <span>ZigBee 环境监测系统</span>
+    </a>
+    <div class="nav-links">
+      <a href="../index.html">首页</a>
+      <a href="project-overview.html" class="active">项目全景</a>
+      <a href="week0-bringup.html">开发日志</a>
+      <a href="pinout-reference.html">引脚速查</a>
+    </div>
+  </nav>
+</header>
+
+<main class="wrap">
+
+  <div class="post-header">
+    <div class="breadcrumb"><a href="../index.html">首页</a> / 项目全景</div>
+    <h1>项目全景：这个系统到底长什么样</h1>
+    <div class="post-meta">
+      <span>2026-10-22</span>
+      <span class="dot">·</span>
+      <span class="tag accent">项目设计</span>
+      <span class="tag">架构</span>
+      <span class="tag">技术选型</span>
+    </div>
+  </div>
+
+  <article class="prose">
+
+    <p>
+      手里有一堆硬件：两块 CC2530 开发板、一个 CC-Debugger、一套 Ubuntu 虚拟机。
+      问题是——<strong>这些东西能拼出一个什么样的项目？</strong>
+    </p>
+
+    <p>
+      这篇记录从「有什么」到「做什么」的收敛过程：最初列出四个候选方案，
+      最后只留一个；以及留下的这个到底要做出什么效果。
+    </p>
+
+    <h2 id="goal">一、项目的一句话定义</h2>
+
+    <div class="callout info">
+      <div class="callout-icon">i</div>
+      <div class="callout-body">
+        <strong>电池供电的 CC2530 无线节点</strong>采集温湿度、烟雾、光照与人体感应，
+        经 ZigBee <strong>协调器</strong>汇聚，由 <strong>ESP32 网关</strong>转 MQTT 上云，
+        最终在 <strong>Ubuntu 服务器</strong>落库、出历史曲线，并能从<strong>网页远程控制继电器</strong>。
+      </div>
+    </div>
+
+    <p>
+      这句话里包含了四个技术层次，每一层对应一类真实岗位能力：
+      嵌入式裸机开发、无线通信协议、网关协议转换、Linux 服务端开发。
+      这也是选它作为主项目的原因——<strong>一条链路能把四类能力全串起来</strong>。
+    </p>
+
+    <h2 id="arch">二、四层架构</h2>
+
+    <figure>
+      <img src="../assets/img/architecture.svg" alt="ZigBee 无线环境监测系统四层架构图">
+      <figcaption>图 1　系统四层架构：数据自左向右汇聚，控制指令自右向左下发</figcaption>
+    </figure>
+
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>层</th>
+            <th>角色</th>
+            <th>干什么</th>
+            <th>技术要点</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><strong>感知层</strong></td>
+            <td>终端节点</td>
+            <td>采集数据、执行命令</td>
+            <td>ADC、单总线、GPIO、低功耗休眠</td>
+          </tr>
+          <tr>
+            <td><strong>网络层</strong></td>
+            <td>协调器</td>
+            <td>组建 ZigBee 网络、汇聚数据、串口送出</td>
+            <td>IEEE 802.15.4、Z-Stack、自定义帧协议</td>
+          </tr>
+          <tr>
+            <td><strong>网关层</strong></td>
+            <td>ESP32-S3</td>
+            <td>串口协议解析 → MQTT 上报；接收下行命令</td>
+            <td>ESP-IDF、MQTT、BLE 配网、LWT 遗嘱</td>
+          </tr>
+          <tr>
+            <td><strong>应用层</strong></td>
+            <td>Ubuntu 服务器</td>
+            <td>存库、告警、网页展示、命令下发</td>
+            <td>termios/epoll、多线程、SQLite WAL、手写 HTTP</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3>为什么中间要加 ESP32 网关</h3>
+
+    <p>
+      CC2530 本身不能直接上网。协调器只能把数据从串口吐出来，所以需要一个「能上网的东西」转一手。
+      可选方案有几种：树莓派、ESP8266、ESP32。
+    </p>
+
+    <ul>
+      <li><strong>树莓派</strong>：太贵太重，而且它本身就是台 Linux 主机，跟服务器角色重复了</li>
+      <li><strong>ESP8266</strong>：只有一路双向 UART，接串口的同时就没法干别的，做网关能力上限太低</li>
+      <li><strong>ESP32-S3</strong>：双核 + 16MB Flash + 8MB PSRAM，一路 UART 收数据、另一核跑 WiFi/MQTT，盈余充足</li>
+    </ul>
+
+    <p>
+      更重要的是，ESP32 上能做的两件事在简历上有额外价值：
+      <strong>MQTT 遗嘱机制（LWT）</strong>——设备掉线时 broker 自动广播离线消息，这是真实产品的必备能力；
+      <strong>BLE 配网</strong>——手机把 WiFi 密码传给设备，而不是写死在固件里。
+    </p>
+
+    <h2 id="features">三、六个可演示的功能</h2>
+
+    <p>
+      项目最怕「做完了但说不清做出了什么」。所以功能必须是<strong>能打开给人看的</strong>。
+      这六条每一条都能现场演示，也都能拍成短视频。
+    </p>
+
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr><th>#</th><th>功能</th><th>怎么演示</th><th>用到的技术</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>1</td>
+            <td><strong>实时监测</strong></td>
+            <td>网页上看到当前温湿度/烟雾/光照/人体状态，一秒刷新</td>
+            <td>串口采集 + HTTP 轮询</td>
+          </tr>
+          <tr>
+            <td>2</td>
+            <td><strong>历史曲线</strong></td>
+            <td>拖动时间轴看过去 24 小时的温度变化折线</td>
+            <td>SQLite 存储 + 前端图表</td>
+          </tr>
+          <tr>
+            <td>3</td>
+            <td><strong>超限告警</strong></td>
+            <td>打火机靠近 MQ-2，蜂鸣器响 + 网页标红</td>
+            <td>阈值规则 + 环形队列</td>
+          </tr>
+          <tr>
+            <td>4</td>
+            <td><strong>远程控制</strong></td>
+            <td>网页点「开」，板载继电器吸合，接的灯泡亮</td>
+            <td>下行命令帧 + GPIO 输出</td>
+          </tr>
+          <tr>
+            <td>5</td>
+            <td><strong>本地显示</strong></td>
+            <td>不联网、不开电脑，彩屏上照样显示四个传感器值</td>
+            <td>SPI 驱动 1.44" TFT</td>
+          </tr>
+          <tr>
+            <td>6</td>
+            <td><strong>电池续航</strong></td>
+            <td>拔掉 USB 只装电池，数据照常上传，测出能跑几小时</td>
+            <td>低功耗模式 + 周期唤醒</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <p>
+      第 6 条是很多人会跳过的，但它恰恰最能体现「这是产品不是玩具」。
+      一块只能插着 USB 跑的开发板，和一块装两节电池能在房间角落跑一天的节点，说服力完全不同。
+    </p>
+
+    <h2 id="decision">四、砍掉的三个方案</h2>
+
+    <p>
+      最初列了四个候选，最后只留一个。砍掉的理由都很实际：
+    </p>
+
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr><th>候选方案</th><th>为什么砍掉</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>STM32F103 做两轮自平衡小车</td>
+            <td>
+              硬件现成，但能力模型太单一——只锻炼 MCU 控制与 PID，
+              <strong>碰不到无线组网、碰不到服务端</strong>。与 IoT 应用开发岗的能力要求重叠度低。
+            </td>
+          </tr>
+          <tr>
+            <td>RS485 / Modbus 工业数据采集</td>
+            <td>
+              这是工业自动化方向的典型技能，跟目标岗位的应用场景重叠不多。
+              时间预算有限，优先投在更相关的地方。
+            </td>
+          </tr>
+          <tr>
+            <td>ESP8266 单点联网（传感器直连 WiFi）</td>
+            <td>
+              做出来是「一个联网的温度计」，<strong>没有网络拓扑、没有网关、没有协议转换</strong>，
+              技术深度不够。<strong>单 UART</strong> 也决定了它没法当网关。
+            </td>
+          </tr>
+          <tr>
+            <td><strong>ZigBee 无线环境监测系统</strong></td>
+            <td>
+              <span class="tag done">选中</span>
+              覆盖「节点 → 组网 → 网关 → 服务端 → 前端」全链路，
+              硬件已具备，缺的只有 ESP32 和电池盒。
+            </td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <blockquote>
+      <p>
+        选项目的标准不是「难不难」，而是<strong>「做完之后，简历上能写出几条对方感兴趣的东西」</strong>。
+        自平衡小车的 PID 调参很酷，但写的出来的是「调好了 PID」；
+        ZigBee + MQTT + Linux 服务端能写出来的是「设计并实现了一套四层物联网数据链路」。
+      </p>
+    </blockquote>
+
+    <h2 id="roadmap">五、五步实施路线</h2>
+
+    <figure>
+      <img src="../assets/img/roadmap.svg" alt="项目五步实施路线图">
+      <figcaption>图 2　五步路线，每步都有可演示产出</figcaption>
+    </figure>
+
+    <p>
+      拆成五步而不是一次性做完，是因为<strong>每一步都必须能独立演示</strong>。
+      这样即使后面某一步卡住，前面的成果依然完整、依然能拿出去说。
+    </p>
+
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr><th>步骤</th><th>做什么</th><th>工期</th><th>完成标志</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>0</td>
+            <td>工具链搭建与冒烟测试</td>
+            <td>—</td>
+            <td><span class="tag done">已完成</span> 串口打出自己写的固件</td>
+          </tr>
+          <tr>
+            <td>1</td>
+            <td>传感器采集 + 彩屏显示 + 串口打印</td>
+            <td>1~2 周</td>
+            <td>串口能看到四路传感器数据</td>
+          </tr>
+          <tr>
+            <td>2</td>
+            <td>协调器 + 终端组网</td>
+            <td>2 周</td>
+            <td>拔掉 USB 只插电池，协调器仍收到数据</td>
+          </tr>
+          <tr>
+            <td>3</td>
+            <td>Ubuntu 写 C 网关服务</td>
+            <td>2~3 周</td>
+            <td>浏览器打开网页能看到实时曲线</td>
+          </tr>
+          <tr>
+            <td>4</td>
+            <td>ESP32 独立 WiFi 上云</td>
+            <td>1~2 周</td>
+            <td>整机通电即工作，不依赖电脑</td>
+          </tr>
+          <tr>
+            <td>5</td>
+            <td>告警 + 远程控制 + 低功耗 + systemd</td>
+            <td>2 周</td>
+            <td>完整产品闭环</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h2 id="linux">六、Linux 侧的分量</h2>
+
+    <p>
+      如果只是「用 Python 读串口存进 SQLite，再用 Flask 起个网页」，那 Linux 部分大概只有两百行，
+      撑不起一个「嵌入式 Linux 应用开发」的岗位描述。
+    </p>
+
+    <p>
+      所以第 3 步设计成一个真正的 C 服务 <code>gw-server</code>，
+      <strong>单进程五线程</strong>，每个线程负责一类职责：
+    </p>
+
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr><th>线程</th><th>职责</th><th>关键技术</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>采集</td>
+            <td>读串口、拆帧、CRC 校验、送环形队列</td>
+            <td><code>termios</code> raw 模式、<code>epoll</code> 边缘触发、USB 掉线自动重连</td>
+          </tr>
+          <tr>
+            <td>订阅</td>
+            <td>第 4 步接入后，改为从 MQTT 收数据</td>
+            <td>裸 socket 拼 MQTT 报文，或 <code>libmosquitto</code></td>
+          </tr>
+          <tr>
+            <td>存储</td>
+            <td>批量写 SQLite，事务提交</td>
+            <td>WAL 模式、预编译语句、批量提交降低 IO</td>
+          </tr>
+          <tr>
+            <td>告警</td>
+            <td>按阈值规则判断，触发蜂鸣器与网页标记</td>
+            <td>条件变量唤醒、环形缓冲</td>
+          </tr>
+          <tr>
+            <td>HTTP</td>
+            <td>响应网页请求，接受控制命令</td>
+            <td><strong>手写 socket 解析 HTTP 报文</strong>，不用框架</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <p>
+      整个服务由 <code>systemd</code> 托管，支持开机自启、崩溃重启、日志进 journald。
+      设备热插拔、信号处理用 <code>signalfd</code> 转 fd 交给 epoll 统一处理，避免异步信号安全问题。
+    </p>
+
+    <div class="callout warn">
+      <div class="callout-icon">!</div>
+      <div class="callout-body">
+        <strong>刻意不用 Flask / Node-RED。</strong>
+        用框架搭出来的东西谁都会，但「自己写 socket 解析 HTTP 请求行、头部、响应体」
+        才能真正体现对网络编程的理解。这部分代码量占整个项目的 <strong>60% 以上</strong>。
+      </div>
+    </div>
+
+    <h2 id="stack">七、技术栈总览</h2>
+
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr><th>领域</th><th>技术</th><th>掌握程度要求</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>MCU 开发</td><td>CC2530（8051 内核）、寄存器级 GPIO/ADC/UART</td><td>能手写驱动</td></tr>
+          <tr><td>无线协议</td><td>IEEE 802.15.4、ZigBee、Z-Stack 3.0.1</td><td>理解组网流程与地址分配</td></tr>
+          <tr><td>应用协议</td><td>自定义二进制帧 + CRC16-CCITT</td><td>能设计并实现帧同步</td></tr>
+          <tr><td>网关</td><td>ESP32-S3、ESP-IDF、FreeRTOS</td><td>任务划分与队列通信</td></tr>
+          <tr><td>物联网协议</td><td>MQTT 3.1.1、QoS、遗嘱、保活</td><td>理解 broker 行为</td></tr>
+          <tr><td>Linux 系统编程</td><td>termios、epoll、signalfd、多线程、条件变量</td><td>能手写事件循环</td></tr>
+          <tr><td>数据存储</td><td>SQLite（WAL、事务、索引）</td><td>理解写入性能优化</td></tr>
+          <tr><td>网络服务</td><td>HTTP/1.1 报文解析、socket API</td><td>不依赖框架手写</td></tr>
+          <tr><td>运维</td><td>systemd unit、journalctl、日志轮转</td><td>能部署并查故障</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="post-footer">
+      <a class="btn" href="../index.html">← 返回首页</a>
+      <a class="btn btn-primary" href="week0-bringup.html">第 0 周开发日志 →</a>
+    </div>
+
+  </article>
+
+</main>
+
+<footer class="site-footer">
+  <div class="wrap-wide">
+    <span>ZigBee 无线环境监测系统 · 开发手记 · by qikai-lab</span>
+    <span>最近更新：2026-10-22</span>
+  </div>
+</footer>
+
+</body>
+</html>
