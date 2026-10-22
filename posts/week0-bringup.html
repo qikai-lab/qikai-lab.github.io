@@ -1,0 +1,620 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>第 0 周：让 CC2530 跑起自己写的代码 · ZigBee 环境监测系统</title>
+<meta name="author" content="qikai-lab">
+<link rel="canonical" href="https://qikai-lab.github.io/posts/week0-bringup.html">
+<meta property="og:type" content="article">
+<meta property="og:site_name" content="ZigBee 无线环境监测系统 · 开发手记">
+<meta property="og:url" content="https://qikai-lab.github.io/posts/week0-bringup.html">
+<meta name="description" content="CC2530 工具链搭建实录：三个里程碑、五个真实的坑，以及最后的串口输出。">
+<link rel="stylesheet" href="../assets/css/style.css">
+</head>
+<body>
+
+<header class="site-header">
+  <nav class="nav">
+    <a class="brand" href="../index.html">
+      <span class="brand-mark">ZB</span>
+      <span>ZigBee 环境监测系统</span>
+    </a>
+    <div class="nav-links">
+      <a href="../index.html">首页</a>
+      <a href="project-overview.html">项目全景</a>
+      <a href="week0-bringup.html" class="active">开发日志</a>
+      <a href="pinout-reference.html">引脚速查</a>
+    </div>
+  </nav>
+</header>
+
+<main class="wrap">
+
+  <div class="post-header">
+    <div class="breadcrumb"><a href="../index.html">首页</a> / 开发日志</div>
+    <h1>第 0 周：让 CC2530 跑起自己写的代码</h1>
+    <div class="post-meta">
+      <span>2026-10-22</span>
+      <span class="dot">·</span>
+      <span class="tag done">M3 已通过</span>
+      <span class="tag">CC2530</span>
+      <span class="tag">IAR EW8051</span>
+      <span class="tag">串口</span>
+    </div>
+  </div>
+
+  <article class="prose">
+
+    <p>
+      目标很简单：<strong>用 IAR 编译出一份自己写的固件，烧进 CC2530，串口能打出字。</strong>
+      听起来像「点个灯」级别的任务，实际做下来花了整整一天，中间踩了五个坑，其中两个能让人卡住半天。
+    </p>
+
+    <p>
+      这篇把每个坑的现象、根因和解法都记下来。如果你手里的也是 yLinux 那块 CC2530 紫板，
+      大概率会撞上同样的问题。
+    </p>
+
+    <div class="callout success">
+      <div class="callout-icon">✓</div>
+      <div class="callout-body">
+        <strong>最终结果</strong>：串口 115200 稳定输出 <code>CC2530 Smoke Test v1.2</code> 与每秒递增的 <code>tick</code>，
+        蜂鸣器只在开机时「嘀」一声，之后安静。CC2530 端 1805 字节代码，Intel HEX 116 条记录、零校验错误。
+      </div>
+    </div>
+
+    <h2 id="hardware">一、手上的硬件</h2>
+
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr><th>部件</th><th>型号</th><th>说明</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>终端节点板</td><td>yLinux CC2530 紫板</td><td>板载 DHT11、MQ-2、人体红外、光敏、继电器、蜂鸣器、3×LED、1.44" 彩屏</td></tr>
+          <tr><td>协调器板</td><td>yLinux CC2530 紫板</td><td>只有 LED / 按键 / 彩屏，没有传感器</td></tr>
+          <tr><td>核心模块</td><td>NuZeeS-SMA-V10</td><td>CC2530F256，带 SMA 外置天线，视距约 400 m</td></tr>
+          <tr><td>下载器</td><td>SmartRF04EB 兼容版</td><td>NUZB-810M03，10 Pin IDC 排线</td></tr>
+          <tr><td>开发环境</td><td>IAR EW8051</td><td>本机为 Embedded Workbench 6.0 Evaluation</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <figure>
+      <img src="../assets/img/node-board.jpg" alt="yLinux CC2530 终端节点板实物，板载 MQ-2 烟雾传感器、HC-SR501 人体红外、继电器、1.44 寸彩屏、SMA 外置天线">
+      <figcaption>图 1　终端节点板：左上是 MQ-2 烟雾传感器，右上是 HC-SR501 人体红外，右下是继电器，中间那块方的就是 1.44 寸彩屏，顶部绿色小板是 NuZeeS-SMA-V10 核心模块接外置天线</figcaption>
+    </figure>
+
+    <figure>
+      <img src="../assets/img/coordinator-board.jpg" alt="yLinux CC2530 协调器板实物，只有核心模块、彩屏、按键和 LED，没有传感器">
+      <figcaption>图 2　协调器板：同一块底板，但除了彩屏、按键、LED 和一个空心插座之外什么都没有——正是这个「什么都没有」决定了它只能干组网转发</figcaption>
+    </figure>
+
+    <p>
+      把两张照片放在一起对照，比任何文字描述都好懂：<strong>终端节点板</strong>上密密麻麻都是传感器和继电器，
+      <strong>协调器板</strong>空得只剩一块屏。这就是为什么采集程序必须烧进前者。
+      一个细节：两块板的核心模块都是 <strong>NuZeeS-SMA-V10</strong>，通过 IPEX 转 SMA 接头接外置天线棒，
+      不靠 PCB 板载天线，这样节点可以放到房间另一头甚至楼下。
+    </p>
+
+    <div class="callout warn">
+      <div class="callout-icon">!</div>
+      <div class="callout-body">
+        <strong>先说清楚两块板的角色</strong>，这是最容易搞混的地方：
+        第 0 周和第 1 步<strong>只烧终端节点板</strong>（带传感器那块），协调器板全程收在抽屉里。
+        协调器要到第 2 步组网才登场。<br>
+        另外，IAR 里的 <code>CoordinatorEB</code> 是<strong>编译配置名</strong>，不等于「要烧到协调器板」——
+        两者没有任何绑定关系。
+      </div>
+    </div>
+
+    <h2 id="milestones">二、三个里程碑</h2>
+
+    <p>工具链验证不要一步到位，拆成三个独立可验证的环节。任何一环失败都能立刻定位，不会「全都不对」。</p>
+
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr><th>里程碑</th><th>验证什么</th><th>通过标志</th><th>状态</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><strong>M1</strong></td>
+            <td>编译链路</td>
+            <td>现成工程 <code>Rebuild All</code> 得到 <code>errors: 0</code></td>
+            <td><span class="tag done">通过</span></td>
+          </tr>
+          <tr>
+            <td><strong>M2</strong></td>
+            <td>烧录链路</td>
+            <td>Flash Programmer 能读出 <code>Chip: CC2530F256</code> 并烧写成功</td>
+            <td><span class="tag done">通过</span></td>
+          </tr>
+          <tr>
+            <td><strong>M3</strong></td>
+            <td>代码链路</td>
+            <td>自己写的 <code>main.c</code> 烧进去，串口打出预期字符串</td>
+            <td><span class="tag done">通过</span></td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <p>
+      <strong>M2 是最难的一关</strong>，很多人卡在这里好几天。一旦「电脑 → 下载器 → 板子」这条线通了，
+      后面就只是写代码的事。所以先用 TI 现成的例程把 M1、M2 跑通，再动自己的代码。
+    </p>
+
+    <figure>
+      <img src="../assets/img/iar-build.png" alt="IAR Embedded Workbench 编译完成窗口，Build 消息显示 Total number of errors: 0 和 Total number of warnings: 0">
+      <figcaption>图 3　M1 通过：<code>Total number of errors: 0</code> / <code>warnings: 0</code>。注意代码区的中文注释是正常显示的——这说明源文件用 GBK 保存的选择是对的</figcaption>
+    </figure>
+
+    <h2 id="pitfalls">三、五个坑</h2>
+
+    <p>按踩到的顺序记录。每一条都是真实卡住过的。</p>
+
+    <h3>坑 1：IAR 版本和协议栈版本必须对上</h3>
+
+    <p>
+      Z-Stack 不是随便哪个 IAR 都能开。版本不对，打开工程直接报
+      <code>Segment too long</code> 或者一堆找不到符号的错误，看起来像代码问题，其实是工具链年代不对。
+    </p>
+
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr><th>Z-Stack 版本</th><th>配套 IAR EW8051</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>Z-Stack 3.0.1</td><td>8.20.1</td></tr>
+          <tr><td>Z-Stack 2.5.1a</td><td>8.10</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <p>
+      另外还有个隐藏坑：<strong>IAR Kickstart 版有 4KB 代码限制</strong>。
+      裸机冒烟测试只有 1.8KB，能用；一旦上 Z-Stack（编译后 40~60KB），立刻报
+      <code>Failed to fit</code>。要么换正式授权，要么用评估版（32KB 限制，勉强够裸机）。
+    </p>
+
+    <h3>坑 2：Flash Programmer 2 根本不认 CC2530</h3>
+
+    <p>
+      TI 官网现在首页推的是 <strong>SmartRF Flash Programmer 2</strong>。装完打开，界面挺现代，
+      但你会发现<strong>找不到 CC2530</strong>——它只支持 CC13xx / CC26xx 那一代。
+    </p>
+
+    <p>必须用老版的 <strong>1.12.8</strong>。识别方法很简单：</p>
+
+    <ul>
+      <li>窗口标题是 <code>SmartRF Flash Programmer</code>（没有「2」）</li>
+      <li>界面上方选项卡里有 <code>Program CCxxxx SoC or MSP430</code></li>
+    </ul>
+
+    <p>打开后，插好排线，上半区应该显示：</p>
+
+    <pre><code><span class="dim">EB type        </span> CC Debugger
+<span class="dim">EB firmware ID </span> 0xxxx
+<span class="dim">Chip           </span> <span class="ok">CC2530F256</span>
+<span class="dim">Flash size     </span> 256</code></pre>
+
+    <p>
+      <strong>顺便一个确认芯片的机会</strong>：<code>Chip</code> 那一栏会直接告诉你是不是 F256。
+      如果不是，Z-Stack 装不下，整个方案要改。这颗芯片最后确认是 <strong>CC2530F256</strong>，
+      所以两块板都能装下完整的 ZigBee 协议栈。
+    </p>
+
+    <h3>坑 3：蜂鸣器一上电就长鸣</h3>
+
+    <p>
+      板子插上 USB，还没烧任何程序，蜂鸣器就开始响。第一反应是板子坏了或者电源有问题。
+    </p>
+
+    <p><strong>其实是硬件设计特性。</strong>蜂鸣器接在 <code>P0_0</code>，由一颗 S8050（NPN）三极管驱动。
+      CC2530 复位后引脚默认状态是：</p>
+
+    <pre><code>P0DIR = 0    <span class="c">→ 引脚是【输入】，不是输出</span>
+P0INP = 0    <span class="c">→ 内部上拉/下拉使能</span>
+默认上拉      <span class="c">→ 引脚电压 ≈ 高电平</span></code></pre>
+
+    <p>
+      这个弱上拉只有约 20kΩ，但漏出的约 0.1mA 电流进到 S8050 基极，放大 100~300 倍就是 10~30mA，
+      <strong>足够把有源蜂鸣器推动起来</strong>。这块板的蜂鸣器电路没有加下拉电阻，所以不烧程序也会一直响。
+    </p>
+
+    <p>官方工程的做法（<code>beep.c</code>）：</p>
+
+    <pre><code><span class="k">#define</span> BEEP_PIN  P0_0
+
+<span class="k">void</span> <span class="f">InitBeep</span>(<span class="k">void</span>)
+{
+    P0DIR |= <span class="n">0x01</span>;   <span class="c">/* P0.0 设为输出 */</span>
+    BEEP_PIN = <span class="n">0</span>;    <span class="c">/* 输出低电平 → 静音 */</span>
+}</code></pre>
+
+    <p>
+      所以解法就是：<strong>初始化顺序里，把蜂鸣器静音放在最前面</strong>，
+      甚至早于串口初始化。我的 <code>main()</code> 里是这样排的：
+    </p>
+
+    <pre><code><span class="k">void</span> <span class="f">main</span>(<span class="k">void</span>)
+{
+    <span class="f">clock_init</span>();    <span class="c">/* 1. 切 32MHz 晶振 */</span>
+    <span class="f">beeper_init</span>();   <span class="c">/* 2. ★ 最优先：P0_0 转输出 + 拉低 */</span>
+    <span class="f">uart0_init</span>();    <span class="c">/* 3. 串口 */</span>
+    <span class="f">led_init</span>();      <span class="c">/* 4. LED */</span>
+}</code></pre>
+
+    <div class="callout danger">
+      <div class="callout-icon">×</div>
+      <div class="callout-body">
+        <strong>这里我犯过一个很贵的错</strong>：一开始把蜂鸣器当成了 <code>P0_6</code>，代码写的是
+        <code>P0DIR |= 0x40; P0_6 = 0;</code>。烧进去蜂鸣器照响不误。<br>
+        因为 <code>P0_6</code> 根本不是蜂鸣器脚，而是<strong>光敏电阻的 ADC 输入通道</strong>。
+        更糟的是，把 ADC 输入脚设成输出并拉低，等于把光敏<strong>短路到地</strong>——这个问题会在第 1 步做光照采集时爆发。
+      </div>
+    </div>
+
+    <h3>坑 4：编译成功，但目录里没有 .hex</h3>
+
+    <p>
+      这是个最容易被误判成「我哪里配错了」的坑。现象是：IAR 里 <code>Rebuild All</code> 显示
+      <code>errors: 0</code>，但 <code>Debug\Exe\</code> 里只有一个 <code>smoke_test.d51</code>，
+      <strong>没有 .hex</strong>，Flash Programmer 无从下手。
+    </p>
+
+    <p>根因有两层：</p>
+
+    <ol>
+      <li>
+        <strong>IAR 默认只生成 UBROF 调试文件（.d51）</strong>，不生成烧录用的 hex，需要额外开启输出转换。
+      </li>
+      <li>
+        我这台机器装的是 <strong>IAR EW8051 6.0</strong>，这个版本的工程选项里
+        <strong>根本没有 Output Converter 页面</strong>。唯一能开的「额外输出」只支持
+        <code>-Osimple-code</code> 格式——那是带 <code>IAR</code> 头的裸二进制，<strong>SmartRF 不认</strong>。
+      </li>
+    </ol>
+
+    <p>试过三条路，前两条都失败：</p>
+
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr><th>尝试</th><th>结果</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>在工程文件里开启 <code>GenerateExtraOutput</code></td>
+            <td>文件生成了，但开头是 <code>IAR</code> + 机器码，不是 Intel HEX，烧录器拒绝</td>
+          </tr>
+          <tr>
+            <td>找 <code>COutputFormat</code> 之类的字段名手动改工程 XML</td>
+            <td>在 IAR 的所有 exe/dll 里（ASCII 和 UTF-16 都搜过）不存在，证明 6.0 无此功能</td>
+          </tr>
+          <tr>
+            <td><strong>自定义链接文件，追加输出格式参数</strong></td>
+            <td><span class="tag done">成功</span> 编译即产出标准 Intel HEX</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <p>
+      具体做法：把 IAR 自带的 <code>lnk51ew_cc2530F256_banked.xcl</code> 复制到工程目录，
+      末尾追加一行，然后把工程的 Linker 配置指向这份自定义链接文件。
+    </p>
+
+    <pre><code><span class="c">// lnk_smoke.xcl 末尾追加</span>
+-Ointel-extended=Debug\Exe\smoke_test.hex</code></pre>
+
+    <p>
+      <code>xcl</code> 是链接器的配置文件，里面写的就是 <code>xlink</code> 的选项。
+      加完这一行之后，<strong>正常按 F7 就会自动产出 Intel HEX</strong>，不需要任何额外操作。
+    </p>
+
+    <div class="callout info">
+      <div class="callout-icon">i</div>
+      <div class="callout-body">
+        <strong>怎么确认文件格式对</strong>：用记事本打开生成的 <code>.hex</code>，
+        第一行必须是冒号开头的文本：
+        <pre style="margin:10px 0 0"><code>:020000040000FA
+:1000000002005000000080FB120080B900030200D3</code></pre>
+        如果开头是 <code>IAR</code> 加一堆乱码，说明格式还是 <code>simple-code</code>，烧录器不会认。
+      </div>
+    </div>
+
+    <p>顺带一个验证方法：Intel HEX 每条记录的字节和（含校验字节）必须是 0。写个脚本扫一遍就能确认：</p>
+
+    <pre><code>116 条记录 · 0 个校验错误
+地址范围 0x00000 ~ 0x0070D · 有效长度 1805 字节</code></pre>
+
+    <h3>坑 5：中文注释在 IAR 里全是乱码</h3>
+
+    <p>
+      源文件是 UTF-8 编码，IAR 按系统 ANSI（简体中文 = GBK）打开，
+      于是所有中文都变成了 <code>工具�?</code> 这种样子。
+    </p>
+
+    <p>
+      <strong>解法：把源文件存成 GBK/ANSI 编码。</strong>在 IAR 里写代码就按 GBK 存，
+      这样中文注释正常显示。反过来，如果要在 VS Code 里同时编辑，记得把编码切到 GB18030，否则另存一次又变回 UTF-8。
+    </p>
+
+    <div class="callout warn">
+      <div class="callout-icon">!</div>
+      <div class="callout-body">
+        更狠的情况是某些 IAR 版本会直接因为非 ASCII 字符报编译错误。
+        所以如果注释里有 emoji（比如 <code>⚠️</code>、<code>✅</code>），建议全部换成 ASCII 标记如
+        <code>[!]</code>、<code>[OK]</code>，避免编码转换时丢字符。
+      </div>
+    </div>
+
+    <h2 id="lesson">四、真正的教训：别信原理图的网络标号</h2>
+
+    <p>
+      蜂鸣器那个错，代价是烧了两次板子、改了两版代码。追根溯源，问题出在<strong>引脚表的来源</strong>上。
+    </p>
+
+    <p>
+      最早是我从原理图 PDF 里提取网络标号，得到一份表：蜂鸣器 P0_6、光敏 P1_1、MQ-2 P0_0、继电器 P0_5。
+      <strong>这份表几乎全错。</strong>PDF 里的网络标号是分块画的，提取时对应关系看串了行。
+    </p>
+
+    <p>
+      后来翻到课程配套的原版工程源码（Z-Stack 2.5.1a 的 <code>GenericApp/Source/</code>），
+      里面有 <code>beep.c</code>、<code>led.c</code>、<code>relay.c</code>、<code>light.c</code>、
+      <code>Gas.c</code>、<code>Human_Body_infrared.c</code>、<code>dht11.C</code> —— 每一个都是能跑通的成品。
+      对着源码逐条核对，才是真表：
+    </p>
+
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr><th>功能</th><th>真实引脚</th><th>依据</th><th>原错误记录</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>蜂鸣器</td><td><strong>P0_0</strong>（高电平响）</td><td><code>beep.c</code></td><td>~~P0_6~~</td></tr>
+          <tr><td>DHT11</td><td>P0_4</td><td><code>dht11.C</code></td><td>P0_4 ✓</td></tr>
+          <tr><td>人体红外</td><td><strong>P0_5</strong>（高=有人）</td><td><code>Human_Body_infrared.c</code></td><td>~~P0_4~~</td></tr>
+          <tr><td>光敏电阻</td><td><strong>P0_6</strong>（ADC ch6）</td><td><code>light.c</code></td><td>~~P1_1~~</td></tr>
+          <tr><td>MQ-2 烟雾</td><td><strong>P0_7</strong>（ADC ch7）</td><td><code>Gas.c</code></td><td>~~P0_0~~</td></tr>
+          <tr><td>继电器</td><td><strong>P1_3</strong>（低电平吸合）</td><td><code>relay.c</code></td><td>~~P0_5~~</td></tr>
+          <tr><td>LED1 / 2 / 3</td><td>P1_0 / P1_1 / P1_4（高电平亮）</td><td><code>led.c</code></td><td>只记了 P1_0</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <figure>
+      <img src="../assets/img/pinmap.svg" alt="CC2530 终端节点板引脚分配图">
+      <figcaption>图 4　终端节点板引脚分配（以官方源码为准）</figcaption>
+    </figure>
+
+    <blockquote>
+      <p>
+        <strong>教训一句话：手里有能跑的官方源码时，信源码，别信原理图导出物。</strong><br>
+        原理图描述的是「设计意图」，源码描述的是「实际能工作的东西」。两者冲突时，后者赢。
+      </p>
+    </blockquote>
+
+    <h2 id="code">五、最终的 main.c</h2>
+
+    <p>裸机版本，不依赖 Z-Stack，只操作寄存器。整个文件三百来行，核心就几块：</p>
+
+    <h3>时钟：必须切到 32MHz 外部晶振</h3>
+
+    <pre><code><span class="k">static void</span> <span class="f">clock_init</span>(<span class="k">void</span>)
+{
+    CLKCONCMD &amp;= ~<span class="n">0x40</span>;        <span class="c">/* bit6=0：选 32MHz 晶振 */</span>
+    <span class="k">while</span> (CLKCONSTA &amp; <span class="n">0x40</span>); <span class="c">/* 等晶振稳定 */</span>
+    CLKCONCMD &amp;= ~<span class="n">0x47</span>;        <span class="c">/* 主时钟不分频 */</span>
+}</code></pre>
+
+    <p>
+      上电默认跑 16MHz 内部 RC。不切晶振的话波特率会差一档，串口收到的全是乱码——
+      这个现象很容易被误判成「波特率设错了」，其实是时钟没起振。
+    </p>
+
+    <h3>串口：115200-8-N-1，查询方式发送</h3>
+
+    <pre><code><span class="k">static void</span> <span class="f">uart0_init</span>(<span class="k">void</span>)
+{
+    PERCFG &amp;= ~<span class="n">0x01</span>;                    <span class="c">/* UART0 用备用位置 1 */</span>
+    P0SEL  |= (<span class="n">0x08</span> | <span class="n">0x04</span>);            <span class="c">/* P0_3 TX / P0_2 RX 设外设功能 */</span>
+    P2DIR  &amp;= ~<span class="n">0xC0</span>;                    <span class="c">/* P0 口优先给外设 */</span>
+
+    U0CSR  |= <span class="n">0x80</span>;                     <span class="c">/* UART 模式 */</span>
+    U0GCR   = <span class="n">11</span>;                       <span class="c">/* BAUD_E */</span>
+    U0BAUD  = <span class="n">216</span>;                      <span class="c">/* BAUD_M */</span>
+    U0CSR  |= <span class="n">0x40</span>;                     <span class="c">/* 使能接收 */</span>
+}</code></pre>
+
+    <p>
+      <code>U0GCR=11 / U0BAUD=216</code> 是 32MHz 下 115200 的标准取值，不用自己算。
+    </p>
+
+    <h3>不用 printf，自己写整数转字符串</h3>
+
+    <p>
+      <code>printf</code> 会拉进 3~8KB 的库代码，对裸机来说太重。手写一个几十字节的就够：
+    </p>
+
+    <pre><code><span class="k">static void</span> <span class="f">uart_putu</span>(<span class="k">unsigned int</span> v)
+{
+    <span class="k">char</span> buf[<span class="n">6</span>];
+    <span class="k">char</span> i = <span class="n">0</span>;
+
+    <span class="k">if</span> (v == <span class="n">0</span>) { <span class="f">uart_putc</span>(<span class="s">'0'</span>); <span class="k">return</span>; }
+    <span class="k">while</span> (v &gt; <span class="n">0</span>) { buf[i++] = (<span class="k">char</span>)(<span class="s">'0'</span> + (v % <span class="n">10</span>)); v /= <span class="n">10</span>; }
+    <span class="k">while</span> (i &gt; <span class="n">0</span>) { <span class="f">uart_putc</span>(buf[--i]); }
+}</code></pre>
+
+    <h2 id="output">六、串口输出</h2>
+
+    <p>烧进去、插上 USB、开串口工具 115200-8-N-1、流控全关：</p>
+
+    <pre><code>================================
+ CC2530 Smoke Test v1.2
+ Build: 2026-10-22
+================================
+<span class="ok">[OK]</span> Clock : 32MHz XOSC
+<span class="ok">[OK]</span> UART0 : 115200-8-N-1 (P0_2/P0_3)
+<span class="ok">[OK]</span> BEEPER: P0_0 -&gt; muted
+<span class="ok">[OK]</span> LED   : P1_0/P1_1/P1_4 output
+<span class="ok">[OK]</span> KEY   : P0_1 input (unverified)
+<span class="dim">[--]</span> Reserved for sensors:
+<span class="dim">       </span>P0_4 DHT11 / P0_5 human
+<span class="dim">       </span>P0_6 light / P0_7 gas
+--------------------------------
+[TEST] Beeper: one short beep...
+<span class="ok">[OK]</span> Beeper: back to mute
+--------------------------------
+If you can read this, your
+toolchain is fully working.
+--------------------------------
+tick = 14  key = 1  P0 = <span class="ok">5E</span>
+tick = 16  key = 1  P0 = <span class="ok">5E</span>
+tick = 18  key = 1  P0 = <span class="ok">5E</span>
+tick = 20  key = 1  P0 = <span class="ok">5E</span>
+tick = 22  key = 1  P0 = <span class="ok">5E</span>
+...
+tick = 58  key = 1  P0 = <span class="ok">5E</span>
+tick = 60  key = 1  P0 = <span class="ok">5E</span>
+tick = 62  key = 1  P0 = <span class="ok">5E</span></code></pre>
+
+    <figure>
+      <img src="../assets/img/serial-output.png" alt="XCOM V2.0 串口助手显示 CC2530 输出的 tick 从 14 递增到 62，P0 值稳定为 5E">
+      <figcaption>图 5　串口 115200-8-N-1，tick 稳定递增、P0 恒为 5E。COUNT 一直在涨、没有卡在某一行，说明主循环没死、时钟没跑飞</figcaption>
+    </figure>
+
+    <h3>一行 P0 值，把整块板的引脚状态说清楚了</h3>
+
+    <p>
+      每行末尾的 <code>P0 = </code> 是特意加的调试信息：把端口 0 的八位值一次性打出来。
+      原来以为会打出 <code>01</code>（只有蜂鸣器脚是 1），实际跑起来是稳定的 <code>5E</code>。
+      把它按位拆开就明白了：
+    </p>
+
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr><th>位</th><th>掩码</th><th>引脚</th><th>5E 里的值</th><th>含义</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>bit 0</td><td><code>0x01</code></td><td>P0_0 蜂鸣器</td><td><strong>0</strong></td><td><strong>输出低 = 静音，静音生效的直接证据</strong></td></tr>
+          <tr><td>bit 1</td><td><code>0x02</code></td><td>P0_1 按键</td><td>1</td><td>上拉状态，未按下</td></tr>
+          <tr><td>bit 2</td><td><code>0x04</code></td><td>P0_2 UART RX</td><td>1</td><td>已切到外设功能</td></tr>
+          <tr><td>bit 3</td><td><code>0x08</code></td><td>P0_3 UART TX</td><td>1</td><td>已切到外设功能</td></tr>
+          <tr><td>bit 4</td><td><code>0x10</code></td><td>P0_4 DHT11</td><td>1</td><td>上拉，单总线空闲态为高</td></tr>
+          <tr><td>bit 5</td><td><code>0x20</code></td><td>P0_5 人体红外</td><td>0</td><td>没人，输出低（有人时会变成 1）</td></tr>
+          <tr><td>bit 6</td><td><code>0x40</code></td><td>P0_6 光敏</td><td>1</td><td>上拉</td></tr>
+          <tr><td>bit 7</td><td><code>0x80</code></td><td>P0_7 MQ-2</td><td>0</td><td>模拟输出为低</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <p>
+      <code>5E</code> = <code>0101 1110</code>，拆完和引脚表对得上，一个都没错位。
+      这本身就是一次校验：如果我早些时候把蜂鸣器记成 <code>P0_6</code>（那其实是光敏脚），
+      那么 <code>bit 0</code> 就不会是 0，而是跟着上拉变 1——数字会立刻把错误指出来。
+    </p>
+
+    <p>
+      顺便记一个经验：调试过程中也见到过 <code>P0</code> 变成 <code>7E</code>，
+      <code>5E</code> 和 <code>7E</code> 只差 <code>0x20</code>，也就是 <code>bit 5</code>——人体红外那一脚。
+      HC-SR501 上电后有几十秒预热期，室内光线、气流变化也会让它输出波动，所以这一位偶尔翻一下是正常的，
+      <strong>不是接触不良，也别急着换板子</strong>。这一步的目标是验证工具链，传感器行为留到第 1 步再处理。
+    </p>
+
+    <p>
+      而 <code>bit 0 = 0</code> 是最值得看的一格。蜂鸣器脚输出低电平，声音才会停；
+      这一位是 0，等于硬件在替我说「静音成功」。这比「我听了一下不响了」更可信。
+      现场排查引脚问题时，把端口值打出来比任何工具都好用——它不会骗你，也不会因为你看错丝印而错。
+    </p>
+
+    <h2 id="retro">七、复盘</h2>
+
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr><th>坑</th><th>表面现象</th><th>真实根因</th><th>怎么避免</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>IAR 版本</td>
+            <td>一堆找不到符号</td>
+            <td>协议栈与编译器年代不匹配</td>
+            <td>先查协议栈文档要求的 IAR 版本</td>
+          </tr>
+          <tr>
+            <td>Flash Programmer 2</td>
+            <td>找不到 CC2530 型号</td>
+            <td>新版只支持 CC13xx/CC26xx</td>
+            <td>固定用 1.12.8</td>
+          </tr>
+          <tr>
+            <td>蜂鸣器长鸣</td>
+            <td>不烧程序也响</td>
+            <td>P0_0 复位弱上拉 + 无下拉电阻</td>
+            <td>初始化第一步就拉低</td>
+          </tr>
+          <tr>
+            <td>没有 .hex</td>
+            <td>编译成功但无法烧录</td>
+            <td>IAR 6.0 无 Output Converter</td>
+            <td>自定义 .xcl 追加 <code>-Ointel-extended</code></td>
+          </tr>
+          <tr>
+            <td>中文乱码</td>
+            <td>注释变问号</td>
+            <td>UTF-8 文件被按 GBK 解析</td>
+            <td>源文件统一存 GBK</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <p>
+      另外还有一条经验跟技术无关，但很有用：<strong>工具链问题一定要拆成独立环节验证</strong>。
+      M1 只验证编译、M2 只验证烧录、M3 才验证自己的代码。如果一上来就写代码、一次失败，
+      你没法判断是代码写错、编译器配错还是下载器没通——三种可能混在一起，排查成本翻好几倍。
+    </p>
+
+    <h2 id="next">八、下一步</h2>
+
+    <p>
+      第 0 周结束意味着「有了一条能用的开发闭环」。接下来第 1 步：让这块板真正开始干活。
+    </p>
+
+    <ul>
+      <li>DHT11 读温湿度（单总线时序，需要微秒级延时）</li>
+      <li>MQ-2 与光敏读模拟量（ADC，注意两个通道要切换 <code>ADCCON3</code>）</li>
+      <li>人体红外读数字量</li>
+      <li>1.44" 彩屏本地显示 + 串口同步输出</li>
+    </ul>
+
+    <p>
+      到这一步才会真正用上那张引脚表，也才会理解为什么「P0_4 / P0_5 / P0_6 / P0_7 绝对不能设成输出」。
+    </p>
+
+    <div class="post-footer">
+      <a class="btn" href="../index.html">← 返回首页</a>
+      <a class="btn btn-primary" href="pinout-reference.html">引脚速查表 →</a>
+    </div>
+
+  </article>
+
+</main>
+
+<footer class="site-footer">
+  <div class="wrap-wide">
+    <span>ZigBee 无线环境监测系统 · 开发手记 · by qikai-lab</span>
+    <span>最近更新：2026-10-22</span>
+  </div>
+</footer>
+
+</body>
+</html>
