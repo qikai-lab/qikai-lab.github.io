@@ -1,0 +1,96 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 400" width="1000" height="400" role="img" aria-label="ZigBee 无线环境监测系统四层架构图">
+  <defs>
+    <marker id="ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#94a3b8"/>
+    </marker>
+    <marker id="ar2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#0d9488"/>
+    </marker>
+  </defs>
+
+  <g font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif">
+
+    <!-- ============ 模块 1：传感器节点 ============ -->
+    <rect x="30" y="90" width="210" height="170" rx="12" fill="#f0fdfa" stroke="#99f6e4" stroke-width="1.5"/>
+    <rect x="30" y="90" width="210" height="7" rx="3.5" fill="#0d9488"/>
+    <circle cx="135" cy="132" r="21" fill="#ffffff" stroke="#5eead4" stroke-width="1.5"/>
+    <circle cx="135" cy="132" r="6" fill="#0d9488"/>
+    <line x1="135" y1="105" x2="135" y2="111" stroke="#0d9488" stroke-width="1.6" stroke-linecap="round"/>
+    <line x1="135" y1="153" x2="135" y2="159" stroke="#0d9488" stroke-width="1.6" stroke-linecap="round"/>
+    <line x1="108" y1="132" x2="114" y2="132" stroke="#0d9488" stroke-width="1.6" stroke-linecap="round"/>
+    <line x1="156" y1="132" x2="162" y2="132" stroke="#0d9488" stroke-width="1.6" stroke-linecap="round"/>
+
+    <text x="135" y="182" text-anchor="middle" font-size="15" font-weight="700" fill="#0f172a">传感器节点</text>
+    <text x="135" y="203" text-anchor="middle" font-size="12" fill="#64748b">CC2530 + 电池供电</text>
+    <line x1="52" y1="215" x2="218" y2="215" stroke="#ccfbf1" stroke-width="1"/>
+    <text x="135" y="234" text-anchor="middle" font-size="11.5" fill="#475569">温湿度 / 烟雾 / 光照</text>
+    <text x="135" y="251" text-anchor="middle" font-size="11.5" fill="#475569">人体感应 / 继电器 / 彩屏</text>
+
+    <!-- ============ 箭头 1→2 ============ -->
+    <line x1="243" y1="175" x2="276" y2="175" stroke="#94a3b8" stroke-width="1.8" marker-end="url(#ar)"/>
+    <text x="259" y="165" text-anchor="middle" font-size="10.5" fill="#64748b" font-weight="600">ZigBee</text>
+    <text x="259" y="192" text-anchor="middle" font-size="10" fill="#94a3b8">2.4GHz</text>
+
+    <!-- ============ 模块 2：协调器 ============ -->
+    <rect x="280" y="90" width="210" height="170" rx="12" fill="#ecfeff" stroke="#a5f3fc" stroke-width="1.5"/>
+    <rect x="280" y="90" width="210" height="7" rx="3.5" fill="#0891b2"/>
+    <circle cx="385" cy="132" r="21" fill="#ffffff" stroke="#67e8f9" stroke-width="1.5"/>
+    <rect x="373" y="126" width="24" height="16" rx="3" fill="none" stroke="#0891b2" stroke-width="1.6"/>
+    <line x1="385" y1="126" x2="385" y2="112" stroke="#0891b2" stroke-width="1.6" stroke-linecap="round"/>
+    <circle cx="385" cy="109" r="3" fill="#0891b2"/>
+
+    <text x="385" y="182" text-anchor="middle" font-size="15" font-weight="700" fill="#0f172a">协调器</text>
+    <text x="385" y="203" text-anchor="middle" font-size="12" fill="#64748b">CC2530 + USB 供电</text>
+    <line x1="302" y1="215" x2="468" y2="215" stroke="#cffafe" stroke-width="1"/>
+    <text x="385" y="234" text-anchor="middle" font-size="11.5" fill="#475569">组建 ZigBee 网络</text>
+    <text x="385" y="251" text-anchor="middle" font-size="11.5" fill="#475569">汇聚数据 → 串口输出</text>
+
+    <!-- ============ 箭头 2→3 ============ -->
+    <line x1="493" y1="175" x2="526" y2="175" stroke="#94a3b8" stroke-width="1.8" marker-end="url(#ar)"/>
+    <text x="509" y="165" text-anchor="middle" font-size="10.5" fill="#64748b" font-weight="600">UART</text>
+    <text x="509" y="192" text-anchor="middle" font-size="10" fill="#94a3b8">115200</text>
+
+    <!-- ============ 模块 3：ESP32 网关 ============ -->
+    <rect x="530" y="90" width="210" height="170" rx="12" fill="#eef2ff" stroke="#c7d2fe" stroke-width="1.5"/>
+    <rect x="530" y="90" width="210" height="7" rx="3.5" fill="#4f46e5"/>
+    <circle cx="635" cy="132" r="21" fill="#ffffff" stroke="#a5b4fc" stroke-width="1.5"/>
+    <rect x="626" y="123" width="18" height="18" rx="3" fill="none" stroke="#4f46e5" stroke-width="1.6"/>
+    <line x1="620" y1="128" x2="626" y2="128" stroke="#4f46e5" stroke-width="1.4" stroke-linecap="round"/>
+    <line x1="620" y1="136" x2="626" y2="136" stroke="#4f46e5" stroke-width="1.4" stroke-linecap="round"/>
+    <line x1="644" y1="128" x2="650" y2="128" stroke="#4f46e5" stroke-width="1.4" stroke-linecap="round"/>
+    <line x1="644" y1="136" x2="650" y2="136" stroke="#4f46e5" stroke-width="1.4" stroke-linecap="round"/>
+
+    <text x="635" y="182" text-anchor="middle" font-size="15" font-weight="700" fill="#0f172a">ESP32 网关</text>
+    <text x="635" y="203" text-anchor="middle" font-size="12" fill="#64748b">ESP32-S3 + WiFi</text>
+    <line x1="552" y1="215" x2="718" y2="215" stroke="#e0e7ff" stroke-width="1"/>
+    <text x="635" y="234" text-anchor="middle" font-size="11.5" fill="#475569">串口协议解析</text>
+    <text x="635" y="251" text-anchor="middle" font-size="11.5" fill="#475569">MQTT 上云 / BLE 配网</text>
+
+    <!-- ============ 箭头 3→4 ============ -->
+    <line x1="743" y1="175" x2="776" y2="175" stroke="#94a3b8" stroke-width="1.8" marker-end="url(#ar)"/>
+    <text x="759" y="165" text-anchor="middle" font-size="10.5" fill="#64748b" font-weight="600">MQTT</text>
+    <text x="759" y="192" text-anchor="middle" font-size="10" fill="#94a3b8">WiFi</text>
+
+    <!-- ============ 模块 4：服务器 ============ -->
+    <rect x="780" y="90" width="190" height="170" rx="12" fill="#f5f3ff" stroke="#ddd6fe" stroke-width="1.5"/>
+    <rect x="780" y="90" width="190" height="7" rx="3.5" fill="#7c3aed"/>
+    <circle cx="875" cy="132" r="21" fill="#ffffff" stroke="#c4b5fd" stroke-width="1.5"/>
+    <rect x="864" y="121" width="22" height="7" rx="1.5" fill="none" stroke="#7c3aed" stroke-width="1.5"/>
+    <rect x="864" y="131" width="22" height="7" rx="1.5" fill="none" stroke="#7c3aed" stroke-width="1.5"/>
+    <rect x="864" y="141" width="22" height="7" rx="1.5" fill="none" stroke="#7c3aed" stroke-width="1.5"/>
+
+    <text x="875" y="182" text-anchor="middle" font-size="15" font-weight="700" fill="#0f172a">服务器</text>
+    <text x="875" y="203" text-anchor="middle" font-size="12" fill="#64748b">Ubuntu + C 程序</text>
+    <line x1="802" y1="215" x2="948" y2="215" stroke="#ede9fe" stroke-width="1"/>
+    <text x="875" y="234" text-anchor="middle" font-size="11.5" fill="#475569">SQLite 存储 + 告警</text>
+    <text x="875" y="251" text-anchor="middle" font-size="11.5" fill="#475569">网页曲线 + 远程控制</text>
+
+    <!-- ============ 反向控制链路 ============ -->
+    <path d="M 875 300 L 875 322 L 135 322 L 135 300" fill="none" stroke="#0d9488" stroke-width="1.6" stroke-dasharray="5 4" marker-end="url(#ar2)" opacity="0.85"/>
+    <rect x="438" y="311" width="134" height="22" rx="11" fill="#ffffff" stroke="#99f6e4" stroke-width="1"/>
+    <text x="505" y="326" text-anchor="middle" font-size="11.5" fill="#0f766e" font-weight="600">控制指令反向下发</text>
+
+    <!-- ============ 底部说明 ============ -->
+    <text x="500" y="372" text-anchor="middle" font-size="11.5" fill="#94a3b8">数据自左向右汇聚，控制指令自右向左下发 · 节点侧电池供电，其余三段市电供电</text>
+  </g>
+</svg>
