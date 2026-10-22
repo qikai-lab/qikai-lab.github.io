@@ -1,0 +1,173 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ZigBee 无线环境监测系统 · 开发手记</title>
+<meta name="author" content="qikai-lab">
+<link rel="canonical" href="https://qikai-lab.github.io/">
+<meta property="og:type" content="article">
+<meta property="og:site_name" content="ZigBee 无线环境监测系统 · 开发手记">
+<meta property="og:url" content="https://qikai-lab.github.io/">
+<meta name="description" content="从一块 CC2530 开始做一个完整的物联网项目：传感器节点、ZigBee 组网、ESP32 网关、Ubuntu 服务器与网页端。完整记录踩坑与实现过程。">
+<link rel="stylesheet" href="assets/css/style.css">
+</head>
+<body>
+
+<header class="site-header">
+  <nav class="nav">
+    <a class="brand" href="index.html">
+      <span class="brand-mark">ZB</span>
+      <span>ZigBee 环境监测系统</span>
+    </a>
+    <div class="nav-links">
+      <a href="index.html" class="active">首页</a>
+      <a href="posts/project-overview.html">项目全景</a>
+      <a href="posts/week0-bringup.html">开发日志</a>
+      <a href="posts/pinout-reference.html">引脚速查</a>
+    </div>
+  </nav>
+</header>
+
+<main>
+
+  <!-- ==================== Hero ==================== -->
+  <section class="hero">
+    <div class="wrap-wide">
+      <span class="hero-kicker">
+        <svg width="12" height="12" viewBox="0 0 12 12" fill="none"><circle cx="6" cy="6" r="4" fill="#0d9488"/></svg>
+        IoT 应用开发 · 实战项目
+      </span>
+      <h1>从一块 <em>CC2530</em> 开始，<br>做一个能写进简历的物联网项目</h1>
+      <p>
+        电池供电的传感器节点采集温湿度、烟雾、光照与人体感应，经 ZigBee 协调器汇聚，
+        由 ESP32 网关转 MQTT 上云，最终在 Ubuntu 服务器落库、出曲线、并能远程控制继电器。
+        这里记录了从零到跑通的每一步，包括所有踩过的坑。
+      </p>
+
+      <div class="hero-stats">
+        <div class="stat">
+          <div class="stat-num">4</div>
+          <div class="stat-label">系统分层</div>
+        </div>
+        <div class="stat">
+          <div class="stat-num">5</div>
+          <div class="stat-label">实施步骤</div>
+        </div>
+        <div class="stat">
+          <div class="stat-num">8</div>
+          <div class="stat-label">板载外设</div>
+        </div>
+        <div class="stat">
+          <div class="stat-num">1/6</div>
+          <div class="stat-label">里程碑完成</div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ==================== 文章列表 ==================== -->
+  <div class="wrap-wide">
+    <div class="section-head">
+      <h2>开发日志</h2>
+      <span>按时间倒序 · 全部为真实记录</span>
+    </div>
+
+    <div class="post-list">
+
+      <a class="post-card" href="posts/week0-bringup.html">
+        <div class="post-card-top">
+          <span class="post-date">2026-10-22</span>
+          <span class="tag done">M3 已通过</span>
+          <span class="tag">CC2530</span>
+          <span class="tag">IAR</span>
+        </div>
+        <h3>第 0 周：让 CC2530 跑起自己写的代码</h3>
+        <p>
+          从点亮 LED 到串口打印，中间踩了五个坑：IAR 版本与协议栈不匹配、Flash Programmer 2 根本不认 CC2530、
+          蜂鸣器上电长鸣、编译出来没有 <code>.hex</code>、中文注释全乱码。
+          这篇把每个坑的现象、根因和最终解法都写清楚了。
+        </p>
+      </a>
+
+      <a class="post-card" href="posts/project-overview.html">
+        <div class="post-card-top">
+          <span class="post-date">2026-10-22</span>
+          <span class="tag accent">项目设计</span>
+          <span class="tag">架构</span>
+        </div>
+        <h3>项目全景：这个系统到底长什么样</h3>
+        <p>
+          四层架构、六个可演示功能、五步实施路线，以及为什么最终砍掉了另外三个候选方案。
+          如果你也在一块 MCU 和一堆模块之间不知道该做什么，这篇是决策过程。
+        </p>
+      </a>
+
+      <a class="post-card" href="posts/pinout-reference.html">
+        <div class="post-card-top">
+          <span class="post-date">2026-10-22</span>
+          <span class="tag accent">参考资料</span>
+          <span class="tag">硬件</span>
+        </div>
+        <h3>终端节点板引脚速查表</h3>
+        <p>
+          从课程原版工程源码逐条核对出来的引脚分配，含 ADC 通道选择方法与三条铁律。
+          之前那份从原理图 PDF 提取的版本是错的，这篇记录了错在哪、为什么错。
+        </p>
+      </a>
+
+    </div>
+
+    <!-- ==================== 技术栈 ==================== -->
+    <div class="section-head">
+      <h2>技术栈</h2>
+      <span>按层次划分</span>
+    </div>
+
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>层级</th>
+            <th>核心组件</th>
+            <th>技术点</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><strong>感知层</strong></td>
+            <td>CC2530F256 + 板载传感器</td>
+            <td>裸机 GPIO / ADC / 单总线、UART、1.44" TFT 彩屏</td>
+          </tr>
+          <tr>
+            <td><strong>网络层</strong></td>
+            <td>CC2530 协调器 + 终端节点</td>
+            <td>IEEE 802.15.4、Z-Stack 3.0.1、自定义帧协议 + CRC16</td>
+          </tr>
+          <tr>
+            <td><strong>网关层</strong></td>
+            <td>ESP32-S3 N16R8</td>
+            <td>ESP-IDF v5、MQTT、BLE 配网、LWT 遗嘱、双核任务</td>
+          </tr>
+          <tr>
+            <td><strong>应用层</strong></td>
+            <td>Ubuntu + C 服务端</td>
+            <td>termios / epoll / signalfd、多线程、SQLite WAL、手写 socket HTTP、systemd</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+  </div>
+
+</main>
+
+<footer class="site-footer">
+  <div class="wrap-wide">
+    <span>ZigBee 无线环境监测系统 · 开发手记 · by qikai-lab</span>
+    <span>最近更新：2026-10-22</span>
+  </div>
+</footer>
+
+</body>
+</html>
