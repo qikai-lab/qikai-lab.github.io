@@ -26,7 +26,7 @@
 ## 当前进度
 
 - [x] **第 0 周**　工具链搭建与裸机冒烟测试（IAR + CC-Debugger + UART + GPIO 全链路打通）
-- [ ] 第 1 步　节点读取多路传感器，彩屏本地显示
+- [x] **第 1 步**　节点读取多路传感器，彩屏本地显示（DHT11 / 光敏 / MQ-2 / 人体红外 / 继电器全部读通）
 - [ ] 第 2 步　协调器与终端组网，脱离 USB 独立供电运行
 - [ ] 第 3 步　Linux 服务端：串口采集、SQLite 落库、HTTP 接口、网页曲线
 - [ ] 第 4 步　ESP32 网关接入，Wi-Fi + MQTT 上云
@@ -55,6 +55,7 @@
 ├── posts/
 │   ├── project-overview.html   项目全景：架构、功能、技术选型与取舍
 │   ├── week0-bringup.html      第 0 周开发日志：工具链、里程碑与踩坑复盘
+│   ├── week1-sensors.html      第 1 周开发日志：五路传感器打通与 ADC 三次翻车复盘
 │   └── pinout-reference.html   终端节点板引脚速查表
 └── assets/
     ├── css/style.css
