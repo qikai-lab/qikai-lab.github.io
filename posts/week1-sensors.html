@@ -1,0 +1,363 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>第 1 周：五个传感器全部打通 · ZigBee 环境监测系统</title>
+<meta name="author" content="qikai-lab">
+<link rel="canonical" href="https://qikai-lab.github.io/posts/week1-sensors.html">
+<meta property="og:type" content="article">
+<meta property="og:site_name" content="ZigBee 无线环境监测系统 · 开发手记">
+<meta property="og:url" content="https://qikai-lab.github.io/posts/week1-sensors.html">
+<meta name="description" content="DHT11、光敏、MQ-2、人体红外、继电器全部打通。核心是 CC2530 ADC 连续三次改错位域的完整复盘，以及光敏方向如何用物理约束判定。">
+<link rel="stylesheet" href="../assets/css/style.css">
+</head>
+<body>
+
+<header class="site-header">
+  <nav class="nav">
+    <a class="brand" href="../index.html">
+      <span class="brand-mark">ZB</span>
+      <span>ZigBee 环境监测系统</span>
+    </a>
+    <div class="nav-links">
+      <a href="../index.html">首页</a>
+      <a href="project-overview.html">项目全景</a>
+      <a href="week0-bringup.html" class="active">开发日志</a>
+      <a href="pinout-reference.html">引脚速查</a>
+    </div>
+  </nav>
+</header>
+
+<main class="wrap">
+
+  <div class="post-header">
+    <div class="breadcrumb"><a href="../index.html">首页</a> / 开发日志</div>
+    <h1>第 1 周：五个传感器全部打通</h1>
+    <div class="post-meta">
+      <span>2026-10-23</span>
+      <span class="dot">·</span>
+      <span class="tag done">M4 已通过</span>
+      <span class="tag">ADC</span>
+      <span class="tag">单总线</span>
+      <span class="tag">排障复盘</span>
+    </div>
+  </div>
+
+  <article class="prose">
+
+    <p>
+      第 0 周解决的是「代码能不能烧进板子」，第 1 周解决的是「烧进去的代码能不能读对数据」。
+      目标是五路传感器——温湿度、光照、烟雾、人体红外、继电器——全部读通，同时显示在 1.44 寸彩屏上、同时从串口打印。
+    </p>
+
+    <p>
+      DHT11 和人体红外一天就通了，<strong>唯独 ADC 那两路花了整整一天，而且我连续改错了三次</strong>。
+      三次都以为自己找到了根因，三次都被实测数据打回来。这篇把三次弯路完整写下来，
+      因为最后那个真因，如果不是被数据逼到死角，根本想不到。
+    </p>
+
+    <div class="callout success">
+      <div class="callout-icon">✓</div>
+      <div class="callout-body">
+        <strong>最终结果</strong>：五路全部读通。串口 115200 每秒输出
+        <code>T=21.5C H=46.0%RH | light=0713/69% gas=0003 | human=0 relay=OFF</code>，
+        彩屏三行数据同步刷新，继电器由板载 S1 按键手动控制，屏幕状态与实物一致。
+      </div>
+    </div>
+
+    <h2 id="result">一、先看最终拿到什么</h2>
+
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr><th>传感器</th><th>引脚</th><th>实测读数</th><th>结论</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>DHT11 温湿度</td><td>P0_4 单总线</td><td>21.5°C / 46%RH</td><td>通过</td></tr>
+          <tr><td>光敏电阻</td><td>P0_6 / ADC ch6</td><td>0713（69%）</td><td>通过，随光变化</td></tr>
+          <tr><td>MQ-2 烟雾</td><td>P0_7 / ADC ch7</td><td>0003</td><td>可用但灵敏度低（后文详解）</td></tr>
+          <tr><td>人体红外</td><td>P0_5 数字输入</td><td>0 / 1 交替</td><td>通过</td></tr>
+          <tr><td>继电器</td><td>P1_3 输出</td><td>S1 按键翻转</td><td>通过</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <p>
+      上电自检会打印一行「探针判据」，这一行是后面所有排障的地基：
+    </p>
+
+<pre>SCAN  c15=0342  c14=0064  c7=0003  c6=0713  c5=1023  c4=0994  c1=0984  c0=0064
+SCAN  VDD/3 = 0342  OK -&gt; ADC core + AVDD5 reference verified
+SCAN  pin probe: c0(beep)=0064 c1(key,pull-up)=0984  OK -&gt; ECH really selects PINS</pre>
+
+    <h2 id="adc">二、ADC 三次改错，一次比一次接近</h2>
+
+    <p>
+      CC2530 的 ADC 用起来只有三个寄存器：<code>ADCCON1</code>、<code>ADCCON2</code>、<code>ADCCON3</code>。
+      写 <code>ADCCON3</code> 就立即启动一次转换，没有单独的启动位。
+      看起来简单，但位域定义只要错一位，现象就完全变样。
+    </p>
+
+    <h3>第 1 次：结果寄存器取位错</h3>
+
+    <p>
+      初始代码写的是 <code>ADCL | ((ADCH &amp; 0x03) &lt;&lt; 8)</code>，只取 ADCH 的低 2 位。
+      现象是读数在四个桶里乱跳：0~255、256~511、512~767、768~1023，
+      导致烟雾值偶尔冲高，蜂鸣器莫名报警。
+    </p>
+
+    <p>
+      查手册才发现：<strong><code>ADCL</code> 的 bit7:2 才是 ADC[5:0]，bit1:0 是未使用的</strong>，
+      <code>ADCH</code> 的 bit7:0 是 ADC[13:6]。所以拼起来得到的是 16 位结果左移 2 位，
+      正确做法是拼完再右移 5 位：
+    </p>
+
+<pre>v  = (unsigned int)ADCL;
+v |= (unsigned int)((unsigned int)ADCH &lt;&lt; 8);
+v &gt;&gt;= 5;              /* 不是 &gt;&gt;4，ADC[13:6] 有 8 位 */</pre>
+
+    <p>
+      这一步改完，乱跳消失了。<strong>但读数变成了恒定值</strong>——于是有了第二次改错。
+    </p>
+
+    <h3>第 2 次：把 ADC 自己占死了</h3>
+
+    <p>
+      现象很奇怪：light 恒为 0130、gas 恒为 0687，连读 16 次一个数都不动。
+    </p>
+
+    <p>
+      当时的思路是「可能 ADC 没真正启动」，于是把 <code>ADCCON1</code> 写成 <code>0x70</code> 想手动置 ST 位，
+      又把 <code>ADCCON2</code> 设成 <code>0x3F</code>。结果更死。
+    </p>
+
+    <p>
+      查英文手册（<em>SWRU191</em> P130）才明白两件事：
+    </p>
+
+    <ul>
+      <li><code>ADCCON1</code> 的复位值 <code>0x33</code> <strong>本来就是对的</strong>：bit7 EOC、bit6 ST、bit5:4 STSEL、bit3:2 RCTRL、bit1:0 保留为 11。写 <code>0x70</code> 反而把 ST 置了位。</li>
+      <li><code>ADCCON2</code> 的低 4 位是 SCH，写 <code>0x3F</code> 让 SCH=1111，选中的是 <strong>VDD/3 内部通道</strong>，ADC 被内部通道占死，跟引脚彻底无关了。</li>
+    </ul>
+
+    <div class="callout warn">
+      <div class="callout-icon">!</div>
+      <div class="callout-body">
+        <strong>这里还埋了一个错误判据</strong>：我曾经用「同一通道连读 16 次，spread &lt; 15 就说明 ADC 在正常转换」来判断。
+        这是错的——<strong>读到的如果是同一个旧值，spread 照样是 0</strong>。
+        「数值稳定」既可能是转换正常，也可能根本没在转换。
+      </div>
+    </div>
+
+    <h3>第 3 次：ECH 是 4 位，不是 3 位</h3>
+
+    <p>
+      把 <code>ADCCON1</code> 改回 <code>0x33</code>、<code>ADCCON2</code> 改回 <code>0x00</code>、
+      移位改成 <code>&gt;&gt;5</code> 之后，读数<strong>还是不动</strong>。
+      但这次自检里出现了一行我没在意的数据：<code>c15=0342</code>。
+    </p>
+
+    <p>
+      0342 恰好等于 <code>1023 × 1.1 / 3.3 ≈ 341</code>——内部 1.1V 基准除以 AVDD5。看起来「基准是对的」。
+      问题是我当时用的基值是 <code>0xB8</code>：
+    </p>
+
+<pre>ADCCON3 = 0xB8 | ch;
+/* 0xB8 = 1011 1000
+   bit7:6 EREF = 10  -> AVDD5 基准
+   bit5:4 EDIV = 11  -> 512 抽取
+   bit3:0 ECH  = 1000  <- 这里！
+   ch 或进去之后 ECH = 8 + ch，选的是【内部通道】而不是 AIN */</pre>
+
+    <p>
+      <strong>ECH 是 4 位（bit3:0），不是 3 位。</strong><code>0xB8</code> 的 bit3 恰好是 1，
+      于是 <code>0xB8 | 6 = 0xBE</code>，ECH=1110 → 选中片内温度传感器，固定输出 0064；
+      <code>0xB8 | 7 = 0xBF</code>，ECH=1111 → 选中 VDD/3，固定输出 0342。
+    </p>
+
+    <p>
+      这也解释了为什么 <code>c15=0342</code> 和 <code>c7=0342</code> 永远相等——
+      <strong>它俩本来就是同一个通道，是自己跟自己比</strong>，这个「基准校验」从头到尾都是假通过。
+    </p>
+
+    <div class="callout danger">
+      <div class="callout-icon">✕</div>
+      <div class="callout-body">
+        <strong>铁证：<code>c1</code> 应该是 1023，实测 0020。</strong>
+        AIN1 接的是 P0_1 按键，内部 20k 上拉，读数必然贴着满量程。
+        读到 0020 说明选的根本不是 AIN1，而是 AIN2-AIN3 差分通道。
+        这一对数一出，前面所有猜测全部作废。
+      </div>
+    </div>
+
+    <p>正确写法是把基值改成 <code>0xB0</code>（bit3 必须为 0）：</p>
+
+<pre>#define ADC_ADCCON3_BASE  0xB0U   /* EREF=10 AVDD5, EDIV=11 512x, ECH 低 4 位留 0 */
+
+ADCCON3 = (unsigned char)(ADC_ADCCON3_BASE | (ch &amp; 0x0FU));
+while ((ADCCON1 &amp; 0x80U) == 0) { /* 等 EOC */ }</pre>
+
+    <p>
+      改完之后 <code>c1=0984</code>，和理论值 1023 只差 ADC 输入阻抗分压的那一点，全通。
+    </p>
+
+    <h3>怎么一眼确认「真的在采引脚」</h3>
+
+    <p>
+      探针法比看数值可靠。选两个极性相反的引脚做对照：
+    </p>
+
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr><th>探针</th><th>通道</th><th>物理状态</th><th>应该是</th></tr>
+        </thead>
+        <tbody>
+          <tr><td><code>c0</code></td><td>AIN0 = P0_0 蜂鸣器输出</td><td>低电平</td><td>接近 0000</td></tr>
+          <tr><td><code>c1</code></td><td>AIN1 = P0_1 按键上拉</td><td>20k 上拉到 3.3V</td><td><strong>接近 1023</strong></td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <p>
+      只要 <code>c1 &gt; 900</code> 且 <code>c0</code> 明显偏小，就说明 ECH 真的选到了引脚。
+      这两个数不对，后面所有读数都不可信。
+    </p>
+
+    <h2 id="light">三、光敏：raw 变大到底算亮还是算暗</h2>
+
+    <p>
+      这路的问题不在代码，在<strong>物理接法</strong>。光敏插在 P8 二针排针上，
+      原理图里 1 脚接 VCC3.3、2 脚接 P0_6，P0_6 再经 R14 10k 下拉到地。
+    </p>
+
+<pre>VCC3.3 ── LDR ──┬── P0_6 ── ADC
+                └── R14 10k ── GND
+
+V   = 3.3 × 10k / (R + 10k)
+raw = 1023 × 10 / (R + 10)
+R   = 10230 / raw - 10   (kΩ)</pre>
+
+    <p>
+      光越强 → R 越小 → raw 越大。但这个公式只在「光敏在上臂」时成立。
+      如果实物是反过来（光敏在下臂），同一个 raw 换算出的阻值会差一个数量级：
+    </p>
+
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr><th>假设</th><th>raw=757（室内）</th><th>raw=206（手掌遮住）</th><th>raw=958（手电照）</th><th>是否自洽</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>LDR 在 3V3 侧</td><td>3.5k</td><td><strong>39.6k</strong></td><td>0.68k</td><td>遮住变暗、阻值变大 ✓</td></tr>
+          <tr><td>LDR 在 GND 侧</td><td>28.5k</td><td>2.5k</td><td>68k</td><td>遮住反而阻值变小 ✗</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <p>
+      只有第一行符合物理规律。所以确认是上臂，<strong>屏幕上的亮度百分比方向是对的</strong>。
+    </p>
+
+    <p>
+      顺带把屏幕显示从 raw 改成了 0~100 的相对亮度。原来的 <code>LGT:0790</code>
+      容易被误当成电阻值——它只是 ADC 原始值，没有单位也没有方向。
+    </p>
+
+    <h2 id="relay">四、继电器：极性反了，屏幕跟实物对着干</h2>
+
+    <p>
+      现象很好笑：屏幕上写着 <code>RLY:OFF</code>，手摸继电器却是吸合的。
+      反过来按一下，屏幕 <code>RLY:ON</code>，实物却断开了。
+    </p>
+
+    <p>
+      原因是照抄了官方例程的宏定义，假设「低电平吸合」。实测这块板是<strong>高电平吸合</strong>。
+      官方 <code>3.继电器模块/main.c</code> 更坑：文件头注释写「高电平断开」，
+      正文代码里 <code>RELY=1</code> 那一行注释却是「吸合」——<strong>文档自相矛盾</strong>。
+    </p>
+
+    <p>
+      结论：注释打架的时候，以实测为准。<code>BSP_RELAY_ACTIVE_LOW</code> 改成 0，一行解决。
+    </p>
+
+    <p>
+      另外把继电器从「跟着人体红外自动跳」改成了「S1 按键手动翻转」。
+      官方按键代码是 <code>while(!KEY1);</code> 死等松手，会把整个主循环卡住；
+      改成非阻塞状态机：每 10ms 采一次，连续 3 次一致才认账，只在下降沿触发。
+    </p>
+
+    <h2 id="mq2">五、MQ-2：不是坏了，是没烧够温度</h2>
+
+    <p>
+      烟雾一路读数长期是 <code>0003</code>，反算阻值：
+    </p>
+
+<pre>Rs = 1550 / raw - 1  (kΩ)
+raw = 3   ->  Rs ≈ 515k
+raw = 11  ->  Rs ≈ 140k</pre>
+
+    <p>
+      正常洁净空气下 MQ-2 的 Rs 是 5k~20k（raw 70~150）。515k 差了整整一个数量级。
+      一开始我的判断是「加热丝没通电」，但手背碰金属网罩是<strong>温的</strong>——
+      如果加热丝断了，会是完全冰凉。<strong>所以这个判断是错的。</strong>
+    </p>
+
+    <p>
+      决定性实验是对着网罩哈一口气：raw 从 0003 跳到 0011，Rs 从 515k 掉到 140k，
+      <strong>响应了 3.7 倍</strong>。同一时间湿度从 46%RH 涨到 58%RH，温度也升了 0.4°C。
+      三路传感器同时朝同一个物理事件变化，说明链路是通的。
+    </p>
+
+    <div class="callout info">
+      <div class="callout-icon">i</div>
+      <div class="callout-body">
+        <strong>结论</strong>：加热丝通、测量电极通、气敏层有响应。
+        气敏层要 300°C 才充分导通，现在大概只到 150~200°C（加热电压约 3.3~4V，不是 5V），
+        所以 Rs 底噪高一个数量级。<strong>元件没坏，是加热功率不足。</strong>
+      </div>
+    </div>
+
+    <p>
+      板载分压是 1k 负载，raw 的理论上限约 0775（Rs→0 时）。
+      这意味着最初设的报警阈值 700 在这块板上永远达不到——
+      <strong>这个坑留到第 5 步做告警功能时再解决</strong>，正确做法是改成「基线 + 增量」而不是绝对阈值。
+    </p>
+
+    <h2 id="rules">六、五条写下来的排障口诀</h2>
+
+    <ol>
+      <li><strong>数值固定不动，先怀疑寄存器状态，不要怀疑传感器。</strong>这一轮三个 bug 全部来自位域写错。</li>
+      <li><strong>位域一定查英文手册。</strong>中文版 <code>ADCCON3</code> 那张表排版错乱，丢了 ECONV 位、位宽也错。</li>
+      <li><strong>别用「自己跟自己比」做自检。</strong><code>0xB8|15</code> 和 <code>0xB8|7</code> 都是 <code>0xBF</code>，永远「通过」。</li>
+      <li><strong>有可运行的官方源码时，信源码不信原理图。</strong>原理图 PDF 提文本会丢连接关系，本项目因此把上拉判断错过一次。</li>
+      <li><strong>注释和代码打架时，信实测。</strong>继电器极性就是靠「屏幕 OFF 但实物吸合」这个矛盾发现的。</li>
+    </ol>
+
+    <div class="callout success">
+      <div class="callout-icon">→</div>
+      <div class="callout-body">
+        <strong>下一步（第 2 步）</strong>：协调器 + 终端节点 ZigBee 组网。
+        验收标准是拔掉终端板的 USB 线、只留独立供电，放到房间另一头，协调器侧仍能连续收到数据。
+      </div>
+    </div>
+
+    <div class="post-footer">
+      <a class="btn" href="../index.html">← 返回首页</a>
+      <a class="btn btn-primary" href="week0-bringup.html">← 第 0 周：工具链搭建</a>
+    </div>
+
+  </article>
+
+</main>
+
+<footer class="site-footer">
+  <div class="wrap-wide">
+    <span>ZigBee 无线环境监测系统 · 开发手记 · by qikai-lab</span>
+    <span>最近更新：2026-10-23</span>
+  </div>
+</footer>
+
+</body>
+</html>
