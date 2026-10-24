@@ -1,0 +1,481 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>第 3 周：Linux 网关，以及为什么网页不能直接查数据库 · ZigBee 环境监测系统</title>
+<meta name="author" content="qikai-lab">
+<link rel="canonical" href="https://qikai-lab.github.io/posts/week3-linux-gateway.html">
+<meta property="og:type" content="article">
+<meta property="og:site_name" content="ZigBee 无线环境监测系统 · 开发手记">
+<meta property="og:url" content="https://qikai-lab.github.io/posts/week3-linux-gateway.html">
+<meta name="description" content="纯 C 写的 Linux 网关：termios 串口、epoll 事件循环、SQLite WAL 批量提交、手写 socket HTTP、网页内嵌进二进制。核心是一个反直觉的发现——批量提交让网页落后 19 秒，所以实时数据必须走内存而不是查库。">
+<link rel="stylesheet" href="../assets/css/style.css">
+</head>
+<body>
+
+<header class="site-header">
+  <nav class="nav">
+    <a class="brand" href="../index.html">
+      <span class="brand-mark">ZB</span>
+      <span>ZigBee 环境监测系统</span>
+    </a>
+    <div class="nav-links">
+      <a href="../index.html">首页</a>
+      <a href="project-overview.html">项目全景</a>
+      <a href="week0-bringup.html" class="active">开发日志</a>
+      <a href="pinout-reference.html">引脚速查</a>
+    </div>
+  </nav>
+</header>
+
+<main class="wrap">
+
+  <div class="post-header">
+    <div class="breadcrumb"><a href="../index.html">首页</a> / 开发日志</div>
+    <h1>第 3 周：Linux 网关，以及为什么网页不能直接查数据库</h1>
+    <div class="post-meta">
+      <span>2026-10-24</span>
+      <span class="dot">·</span>
+      <span class="tag done">第 3 步已通过</span>
+      <span class="tag">Linux C</span>
+      <span class="tag">epoll</span>
+      <span class="tag">SQLite</span>
+      <span class="tag">HTTP</span>
+    </div>
+  </div>
+
+  <article class="prose">
+
+    <p>
+      这一步是整个项目里代码量最大的部分，也是唯一完全跑在 Linux 上的部分：
+      串口收帧 → 解析 → 落库 → 起 HTTP 服务 → 浏览器看曲线。
+      全 C，只用 POSIX 和 SQLite，<strong>不引任何第三方 Web 框架</strong>。
+    </p>
+
+    <p>
+      功能本身不复杂。但有三个地方，我最初的做法「逻辑上完全正确」，
+      实测下来却是错的——而且错得非常隐蔽，不盯着数据看根本发现不了。
+      这篇主要讲这三个。
+    </p>
+
+    <h2 id="arch">一、整体结构</h2>
+
+<pre> CC2530 终端 ──ZigBee──&gt; 协调器 ──UART 115200──&gt; Ubuntu 网关
+
+   gw_serial.c   termios raw 模式 + O_NONBLOCK + 拔插重连
+        |
+   gw_frame.c    st: 24 字节定长帧，滑动窗口重同步
+        |
+   +----+---------------------+
+   |                          |
+ gw_latest.c              gw_db.c
+ 进程内快照              SQLite WAL + 批量提交
+ （0 延迟）                   |
+   |                          |
+ /api/latest              /api/history
+   +------------+-------------+
+                |
+          http_srv.c   手写 socket HTTP，跑在同一个 epoll 里
+                |
+             浏览器</pre>
+
+    <p>
+      <strong>全程序单进程单线程。</strong>串口 fd、信号 fd、HTTP 监听 fd、每条 HTTP 连接 fd，
+      全部注册进同一个 <code>epoll</code>。没有线程、没有锁、没有跨线程队列。
+    </p>
+
+    <p>
+      选择单线程的理由很实际：这个系统每秒只来一帧数据、同时最多几个浏览器，
+      并发压力几乎为零。而多线程带来的锁竞争、数据竞态、退出时序问题，
+      调试成本远高于它带来的收益。<strong>并发度用不上就先别上。</strong>
+    </p>
+
+    <h2 id="frame">二、协议：定长帧为什么不需要 CRC</h2>
+
+    <p>
+      帧格式是从课程源码里逆出来的，<strong>24 字节定长，没有长度字段、没有序号、没有 CRC</strong>：
+    </p>
+
+<pre>[0..3]  73 74 3A 65        帧头 "st:e"
+[4..7]  温度 分/整、湿度 分/整
+[8]     节点号
+[9..11] 加速度 x/y/z
+[12..13] 人体红外      [14..15] 光照
+[16..17] 保留          [18..19] 烟雾
+[20..21] 继电器        [22..23] ADC
+        全部小端</pre>
+
+    <p>
+      第一反应是「没有 CRC 怎么保证不出错」。但仔细想：
+      <strong>这是自己写两端的私有协议，不是标准协议，不需要防御恶意构造的帧。</strong>
+      无线链路的错误基本是位翻转或丢字节，而 24 字节定长 + 4 字节帧头的组合，
+      让「错误数据恰好构成一个合法帧」的概率极低。
+    </p>
+
+    <p>
+      于是校验改成<strong>字段范围检查</strong>，比 CRC 更聪明——因为它检查的是<em>物理可能性</em>：
+    </p>
+
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr><th>字段</th><th>合法范围</th><th>依据</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>帧头</td><td><code>73 74 3A 65</code></td><td>精确匹配</td></tr>
+          <tr><td>节点号</td><td>≠ 0</td><td>0 号是协调器自己</td></tr>
+          <tr><td>人体红外 / 继电器</td><td>∈ {0, 1}</td><td>数字量，2 就是错的</td></tr>
+          <tr><td>光照 / 烟雾</td><td>≤ 1023</td><td>CC2530 是 10 位 ADC</td></tr>
+          <tr><td>温度 / 湿度</td><td>上限过滤</td><td>DHT11 量程 0~50℃ / 20~90%RH</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <p>
+      这比 CRC 强的地方在于：<strong>CRC 只能告诉你「这帧坏了」，范围检查能告诉你「哪个字段坏了」</strong>。
+      调试时前者只能整帧丢弃，后者能直接定位到是温度字段还是光照字段异常。
+    </p>
+
+    <div class="callout warn">
+      <div class="callout-icon">!</div>
+      <div class="callout-body">
+        <strong>但定长帧带来另一个问题：失步。</strong>
+        串口丢一个字节之后，后面所有字节的位置都错一位，帧头再也对不上。
+        解法是滑动窗口——不匹配就往后挪一个字节再试，同时累计「重同步字节数」。
+        这个计数很有用：<strong>它持续增长说明线路质量有问题</strong>，
+        稳定为 0 说明串口链路干净。
+      </div>
+    </div>
+
+    <h3>实测结果</h3>
+
+<pre><span class="ok">[18:11:22] #1     n1   19.5C 57.0%  lux= 584( 57%)  gas=  40  PIR=无人  RLY=OFF</span>
+<span class="ok">[18:11:23] #2     n1   19.5C 57.0%  lux= 584( 57%)  gas=  40  PIR=无人  RLY=OFF</span>
+...
+<span class="ok">[18:12:09] #48    n1   19.5C 57.0%  lux= 584( 57%)  gas=  35  PIR=无人  RLY=OFF</span>
+<span class="dim">---- 有效帧=48  坏帧=0  残帧=0  重同步=0B  入库=48  库错=0  重连=0 ----</span></pre>
+
+    <p>
+      48 帧跨越 47 秒，<strong>帧间隔精确 1.000 秒</strong>；坏帧、残帧、重同步、库错、重连全部为 0。
+      这个干净程度说明固件侧的发送节奏和 Linux 侧的读取节奏是对齐的
+      ——节点 1 秒发一帧，网关的处理耗时远小于 1 秒，缓冲区从不积压。
+    </p>
+
+    <figure>
+      <img src="../assets/img/gateway-web-normal.png" alt="网关内置网页的正常状态：温度 24.5°C、湿度 60.9%、光照 52%、烟雾 38 raw，烟雾状态为正常，自适应基线 35、当前倍数 1.09 倍，下方是温湿度和光照烟雾两条实时曲线">
+      <figcaption>网关自己吐出来的网页。整个页面编进二进制，无外部依赖、无第三方 Web 框架</figcaption>
+    </figure>
+
+    <h2 id="trap1">三、陷阱一：批量提交让网页落后 19 秒</h2>
+
+    <p>
+      这是整篇最有价值的部分。
+    </p>
+
+    <p>
+      环境数据每秒一条，如果每条都单独提交事务，SQLite 每秒要做一次 fsync，
+      写入放大很明显。所以做了**批量提交**：攒够 20 条再 <code>COMMIT</code> 一次。
+      这是标准的优化手段，写入性能提升接近一个数量级。
+    </p>
+
+    <p>
+      然后问题来了。网页每 2 秒轮询一次最新数据，我最初的实现是
+      <code>/api/latest</code> 直接查库：
+    </p>
+
+<pre><span class="k">SELECT</span> * <span class="k">FROM</span> env_data <span class="k">ORDER BY</span> id <span class="k">DESC LIMIT</span> 1;</pre>
+
+    <p>
+      逻辑上没问题。但实测时发现：<strong>终端上已经打到 #48 了，网页上的「当前温度」还是 #29 那一帧</strong>。
+      差得不是一点，而且永远差着一截。
+    </p>
+
+    <h3>原因：未提交的行，别的连接看不见</h3>
+
+    <p>
+      <code>gw_db_insert()</code> 插完 20 条之后才 <code>COMMIT</code>。
+      在提交之前，这 20 条数据只存在于<em>当前连接的事务</em>里。
+      虽然物理上已经写进 WAL 文件了，但<strong>任何其他读者都看不见它们</strong>
+      ——包括同一个进程里另开连接去查。
+    </p>
+
+    <p>
+      所以「库里最新的那条」永远是最多 19 秒之前的数据。
+      这不是 bug，这是<strong>事务隔离性的正确行为</strong>。
+      错的是我把它当成了实时数据源。
+    </p>
+
+    <div class="callout danger">
+      <div class="callout-icon">✕</div>
+      <div class="callout-body">
+        <strong>关键认知：数据库里的「最新」不等于系统的「当前」。</strong>
+        批量提交、写缓冲、事务隔离，这三样任何一样存在，
+        用查库来做实时数据源就是错的。<br><br>
+        而且这个错误的可怕之处在于：<strong>它不报错、不告警，只是悄悄地慢</strong>。
+        如果这个页面是给别人演示的，你会以为「传感器反应慢」，
+        转头去查硬件——查一个星期也查不出来。
+      </div>
+    </div>
+
+    <h3>解法：实时走内存，历史走库</h3>
+
+    <p>
+      加了一个进程内快照模块 <code>gw_latest.c</code>，收到帧的第一时间就更新它：
+    </p>
+
+<pre><span class="k">typedef struct</span> {
+    <span class="k">int</span>       valid;      <span class="c">/* 0 = 还没收到过任何一帧 */</span>
+    int64_t   ts;
+    <span class="k">int</span>       temp_x10, hum_x10, lux, gas;
+    uint8_t   pir, relay;
+    <span class="k">uint32_t</span>  frames;     <span class="c">/* 累计有效帧数 */</span>
+    ...
+} gw_latest_t;</pre>
+
+    <p>数据流变成两条互不干扰的路径：</p>
+
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr><th>接口</th><th>数据源</th><th>延迟</th><th>用途</th></tr>
+        </thead>
+        <tbody>
+          <tr><td><code>/api/latest</code></td><td><strong>内存快照</strong></td><td>0</td><td>网页「当前值」、告警判定</td></tr>
+          <tr><td><code>/api/history</code></td><td>SQLite</td><td>≤ 19 秒</td><td>曲线、历史回溯</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <p>
+      曲线最多滞后 19 秒完全没关系——它画的是一分钟、一小时的趋势，
+      差 19 秒看不出来。但「当前温度」必须是真的当前。
+    </p>
+
+    <div class="callout info">
+      <div class="callout-icon">i</div>
+      <div class="callout-body">
+        <strong>顺带一个更隐蔽的坑。</strong>
+        我原本用 <code>gw_db_total_rows()</code> 统计库内总行数，这个函数开头会先
+        <code>COMMIT</code> 再 <code>COUNT</code>，保证数字准确。
+        但 HTTP 的 <code>/api/stats</code> 每 2 秒调它一次
+        ——<strong>等于每 2 秒强制提交一次事务，批量提交彻底失效</strong>。<br><br>
+        这个错更难查：功能全对、数字全对，只是性能悄悄退化成每条一提交。
+        后来单独写了个 <code>gw_db_count_rows()</code>，纯查不提交。
+        <strong>「查询函数有副作用」是持久层设计的红线。</strong>
+      </div>
+    </div>
+
+    <h2 id="trap2">四、陷阱二：Content-Length 和 body 不一致</h2>
+
+    <p>
+      HTTP 服务是自己用 <code>socket()</code> 写的，没引第三方库。路由只有五条：
+      <code>/</code>、<code>/index.html</code>、<code>/api/latest</code>、
+      <code>/api/history</code>、<code>/api/stats</code>，其余一律 404。
+    </p>
+
+    <p>
+      响应头是手拼的字符串：
+    </p>
+
+<pre>HTTP/1.1 200 OK
+Content-Type: application/json; charset=utf-8
+Content-Length: 187        <span class="c">/* ← 这个数字必须等于 body 的实际字节数 */</span>
+Connection: close</pre>
+
+    <p>
+      手写 HTTP 最容易犯的、也最难查的错就是这个数。
+      <strong>如果 <code>Content-Length</code> 比实际 body 大，浏览器不会报错，它会一直转圈等剩下的字节</strong>，
+      直到超时。表现是「页面打不开，但服务器日志显示请求已经返回 200 了」。
+    </p>
+
+    <p>
+      我踩的变体更阴：<strong>400 和 405 两条错误响应的 <code>Content-Length</code> 是写死的常量</strong>
+      （20 和 21）。后来改了一个字的错误提示文案，长度变了，这个数没跟着改，
+      于是这两条错误响应全部挂掉。而正常路径一切正常——因为正常路径是 <code>snprintf</code>
+      算出长度再填的。
+    </p>
+
+    <p>
+      修法：所有响应统一走一个 <code>build_plain()</code> 辅助函数，用 <code>strlen</code> 算长度，
+      不再手写常量。
+    </p>
+
+    <div class="callout success">
+      <div class="callout-icon">✓</div>
+      <div class="callout-body">
+        <strong>测试策略</strong>：每个 HTTP 用例都强制校验
+        「<code>Content-Length</code> 声明的值」和「实际 body 长度」是否相等。
+        这条断言成本几乎为零，却能一次性堵住手写 HTTP 最经典的坑。
+      </div>
+    </div>
+
+    <h2 id="trap3">五、陷阱三：网页放哪里</h2>
+
+    <p>
+      网页本来可以从文件系统读：<code>/var/www/index.html</code> 之类。
+      但这样部署就变成「拷贝二进制 + 拷贝网页 + 保证路径正确」三件事，
+      少一样就打不开，而且报错信息很难看懂。
+    </p>
+
+    <p>
+      改成<strong>把 HTML 编译进二进制</strong>：一个小 Python 脚本把
+      <code>web/index.html</code> 转成一个 C 字节数组 <code>http_page.h</code>，
+      直接编进程序。启动时不需要任何外部文件。
+    </p>
+
+<pre><span class="c">/* http_page.h（自动生成，不要手改） */</span>
+<span class="k">static const unsigned char</span> g_index_html[] = { 0x3C, 0x21, 0x44, ... };
+<span class="k">#define</span> <span class="n">GW_INDEX_HTML_LEN</span> 7466</pre>
+
+    <p>
+      好处很直接：<strong>整个网关就是一个可执行文件</strong>，
+      <code>scp</code> 过去就能跑，不存在「网页路径不对」。改网页的流程是
+      「改 <code>web/index.html</code> → 跑 <code>make web</code> → 重新编译」。
+    </p>
+
+    <p>
+      代价是二进制大了一点（约 7KB），以及改网页必须重编译。
+      对这个项目来说完全划算。
+    </p>
+
+    <h2 id="epoll">六、epoll 里同时管四类 fd</h2>
+
+    <p>
+      单线程要同时处理四件事：串口来数据、收到 Ctrl+C、有新浏览器连接、已有连接发来请求。
+      全部塞进一个 <code>epoll</code> 循环：
+    </p>
+
+<pre><span class="k">for</span> (;;) {
+    n = epoll_wait(ep, events, 8, timeout_ms);
+
+    <span class="k">for</span> (i = 0; i &lt; n; i++) {
+        fd = events[i].data.fd;
+
+        <span class="k">if</span> (fd == ser_fd)      on_serial();     <span class="c">/* 串口有数据 */</span>
+        <span class="k">else if</span> (fd == sig_fd)  <span class="k">goto</span> done;      <span class="c">/* signalfd：收到退出信号 */</span>
+        <span class="k">else if</span> (fd == http_fd) http_accept();   <span class="c">/* 新连接 */</span>
+        <span class="k">else</span>                    http_handle(fd); <span class="c">/* 已有连接 */</span>
+    }
+}</pre>
+
+    <h3>signalfd：把信号变成文件描述符</h3>
+
+    <p>
+      传统做法是 <code>signal()</code> 注册回调，但回调在任意时刻打断主循环，
+      如果它正在写 SQLite，就会踩到不可重入问题。
+    </p>
+
+    <p>
+      <code>signalfd</code> 把信号变成一个可读的 fd，注册进 epoll。
+      信号来了 epoll 返回，主循环<strong>在安全的时刻</strong>处理退出，
+      该提交的提交、该关的关。<code>Ctrl+C</code> 从此不会丢数据。
+    </p>
+
+    <h3>串口拔插重连</h3>
+
+    <p>
+      USB 转串口被拔掉时，epoll 会返回 <code>EPOLLHUP</code> 或 <code>EPOLLERR</code>。
+      这时必须：关掉旧 fd → 从 epoll 移除 → 每秒重试打开设备 → 成功后重新注册。
+    </p>
+
+    <p>
+      <strong>不关旧 fd 就会 fd 泄漏</strong>，插拔几十次之后 <code>open()</code> 开始返回
+      <code>EMFILE</code>，而错误信息是「打开串口失败：Too many open files」，
+      和「串口坏了」完全不同——好在这个坑我在写完重连逻辑时就防住了。
+    </p>
+
+    <h2 id="test">七、怎么在没有板子的情况下测</h2>
+
+    <p>
+      这一步的代码全在 Ubuntu 上跑，但我写代码在 Windows。为了不每次都「传上去 → 发现编译错 → 改 → 再传」，
+      做了三件事：
+    </p>
+
+    <ol>
+      <li>
+        <strong>纯逻辑模块单独编译测试。</strong>
+        解析层、落库层、滤波层都不依赖串口和 socket，可以在 Windows 上用 MinGW 直接编译运行，
+        连着 SQLite 的 DLL 一起跑。<strong>178 项断言，全在本机跑完，不需要任何硬件。</strong>
+      </li>
+      <li>
+        <strong>模拟节点。</strong>
+        一个 Python 脚本按真实协议生成 24 字节帧，配合 <code>socat</code> 造一对虚拟串口，
+        网关以为自己在读真串口，实际读的是脚本。
+        它也能注入垃圾字节和截断帧，专门验重同步逻辑。
+      </li>
+      <li>
+        <strong>端到端串联测试。</strong>
+        把 <code>main.c</code> 整个 <code>#include</code> 进测试文件（先 <code>#define main</code> 改名），
+        这样 <code>static</code> 的帧回调函数就可见了，能喂假帧跑完整链路：
+        解析 → 快照更新 → 落库 → 告警判定。<strong>验的就是「接线」，这是最容易出 bug 的地方。</strong>
+      </li>
+    </ol>
+
+    <div class="callout info">
+      <div class="callout-icon">i</div>
+      <div class="callout-body">
+        <strong>Windows 上验 Linux 代码的土办法</strong>：
+        含 <code>epoll</code>／<code>signalfd</code>／<code>sys/socket.h</code> 的文件在 MinGW 上编不过，
+        但可以<strong>自己写桩头文件</strong>——把用到的结构体和函数声明抄一遍，
+        函数体全部空实现，然后 <code>-I</code> 指过去。
+        这样能骗过编译器做语法检查，甚至能链接起来跑逻辑测试。
+        桩文件用完就删，不进版本库。
+      </div>
+    </div>
+
+    <h2 id="lessons">八、这轮的收获</h2>
+
+    <ol>
+      <li>
+        <strong>数据库里的「最新」不等于系统的「当前」。</strong>
+        有批量提交就有延迟，实时数据必须走内存。
+      </li>
+      <li>
+        <strong>查询函数不能有副作用。</strong>
+        一个「顺手提交一下保证数字准确」的实现，能让整个批量优化归零，
+        而且不报错、不降速感知、只是慢。
+      </li>
+      <li>
+        <strong>不报错的错最难查。</strong>
+        Content-Length 写死、fd 泄漏、事务延迟——这三个都不会崩，
+        只会让系统「表现怪怪的」。所以断言要写在这些地方。
+      </li>
+      <li>
+        <strong>私有协议不需要通用协议的安全等级。</strong>
+        两端都自己写、链路是自己拉的，字段范围检查比 CRC 更有诊断价值。
+        别为了「规范」增加不必要的复杂度。
+      </li>
+      <li>
+        <strong>能离线测的逻辑就别上板子测。</strong>
+        178 项断言本机跑完只要一秒，上板子跑一轮要五分钟。这个杠杆率极高。
+      </li>
+    </ol>
+
+    <div class="callout success">
+      <div class="callout-icon">→</div>
+      <div class="callout-body">
+        <strong>下一步（第 4 周）</strong>：烟雾告警。
+        这里有个必须先想清楚的问题——MQ-2 的读数<em>没有绝对意义</em>，
+        同一个元件在不同季节的基线能差一倍。所以不能写死阈值。
+      </div>
+    </div>
+
+    <div class="post-footer">
+      <a class="btn" href="../index.html">← 返回首页</a>
+      <a class="btn btn-primary" href="week4-smoke-alarm.html">第 4 周：烟雾告警 →</a>
+    </div>
+
+  </article>
+
+</main>
+
+<footer class="site-footer">
+  <div class="wrap-wide">
+    <span>ZigBee 无线环境监测系统 · 开发手记 · by qikai-lab</span>
+    <span>最近更新：2026-10-24</span>
+  </div>
+</footer>
+
+</body>
+</html>
