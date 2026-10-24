@@ -15,35 +15,44 @@
 | 层级 | 组成 | 职责 |
 | --- | --- | --- |
 | 感知层 | CC2530 + DHT11 / MQ-2 / 光敏 / 人体红外 | 定时采集环境数据，本地彩屏显示，电池供电 |
-| 汇聚层 | CC2530 协调器 | 建立 ZigBee 网络、管理节点入网、串口输出结构化帧 |
-| 网关层 | ESP32-S3 | 串口收帧 → 解析 → Wi-Fi + MQTT 上云，支持 BLE 配网 |
-| 应用层 | Ubuntu + C 服务端 | 数据落库、告警判定、HTTP 接口、网页曲线、命令下发 |
+| 汇聚层 | CC2530 协调器 | 建立 ZigBee 网络、管理节点入网、串口输出 24 字节定长帧 |
+| 网关层 | Ubuntu + C 服务端 | 串口解析、SQLite 落库、告警判定、内置 HTTP 服务与网页 |
+| 上云层 | ESP32-S3（规划中） | 转发至 MQTT，脱离局域网访问 |
 
-控制链路反向贯通：网页下发指令 → MQTT → ESP32 → 协调器 → 节点 → 继电器动作。
+数据目前经**串口直连**进入 Ubuntu，不经过 ESP32 —— 这一层是为了先把 Linux 侧做扎实，
+上云作为独立阶段后加，不阻塞主线。
+
+控制链路最终反向贯通：网页下发指令 → MQTT / 串口 → 协调器 → 节点 → 继电器动作。
 
 ---
 
 ## 当前进度
 
-- [x] **第 0 周**　工具链搭建与裸机冒烟测试（IAR + CC-Debugger + UART + GPIO 全链路打通）
-- [x] **第 1 步**　节点读取多路传感器，彩屏本地显示（DHT11 / 光敏 / MQ-2 / 人体红外 / 继电器全部读通）
-- [ ] 第 2 步　协调器与终端组网，脱离 USB 独立供电运行
-- [ ] 第 3 步　Linux 服务端：串口采集、SQLite 落库、HTTP 接口、网页曲线
-- [ ] 第 4 步　ESP32 网关接入，Wi-Fi + MQTT 上云
-- [ ] 第 5 步　告警、远程控制、低功耗与 systemd 托管
+| 阶段 | 内容 | 状态 |
+| --- | --- | --- |
+| 第 0 周 | 工具链搭建与裸机冒烟（IAR + CC-Debugger + UART + GPIO） | ✅ |
+| 第 1 步 | 节点读多路传感器，彩屏本地显示 | ✅ |
+| 第 2 步 | 协调器 / 终端组网，**断网仍持续采样** | ✅ |
+| 第 3 步 | Linux 网关：串口 → SQLite → HTTP → 网页 | ✅ |
+| 附加模块 | 烟雾告警：中值滤波 + 自适应基线 + 状态机 | ✅ |
+| 第 4 步 | ESP32 网关接入，Wi-Fi + MQTT 上云 | ⬜ |
+| 第 5 步 | 远程控制继电器、低功耗、systemd 托管 | ⬜ |
+
+已完成部分的关键数据：串口 115200 8-N-1 稳定收帧，**实测帧间隔 1.000 秒、坏帧 / 残帧 / 重同步 / 库错 / 断线重连全部为 0**；
+网关为单进程单线程（epoll 统一事件循环），**178 项离线单元测试全部通过**，不需要任何硬件即可验证解析、落库、告警与 HTTP 响应。
 
 ---
 
 ## 技术栈
 
 **嵌入式端**
-`C` · `CC2530 (8051)` · `IAR EW8051` · `Z-Stack` · `ZigBee / IEEE 802.15.4` · `UART` · `ADC` · `单总线时序`
-
-**网关端**
-`ESP32-S3` · `ESP-IDF` · `FreeRTOS` · `MQTT` · `Wi-Fi` · `BLE 配网`
+`C` · `CC2530 (8051)` · `IAR EW8051` · `Z-Stack 2.5.1a` · `OSAL` · `ZigBee / IEEE 802.15.4` · `UART` · `ADC` · `单总线时序`
 
 **服务端**
-`Linux` · `C` · `termios` · `epoll` · `signalfd` · `多线程` · `SQLite` · `socket 手写 HTTP` · `systemd`
+`Linux` · `C` · `termios` · `epoll` · `signalfd` · `单进程事件循环` · `SQLite (WAL + 批量事务)` · `socket 手写 HTTP` · `中值滤波与自适应基线`
+
+**规划中**
+`ESP32-S3` · `ESP-IDF` · `FreeRTOS` · `MQTT` · `systemd`
 
 ---
 
@@ -53,10 +62,13 @@
 .
 ├── index.html              首页
 ├── posts/
-│   ├── project-overview.html   项目全景：架构、功能、技术选型与取舍
-│   ├── week0-bringup.html      第 0 周开发日志：工具链、里程碑与踩坑复盘
-│   ├── week1-sensors.html      第 1 周开发日志：五路传感器打通与 ADC 三次翻车复盘
-│   └── pinout-reference.html   终端节点板引脚速查表
+│   ├── project-overview.html       项目全景：架构、功能、技术选型与取舍
+│   ├── week0-bringup.html          第 0 周：工具链、里程碑与踩坑复盘
+│   ├── week1-sensors.html          第 1 周：五路传感器打通与 ADC 三次翻车复盘
+│   ├── week2-network.html          第 2 周：ZigBee 组网与「断网也要采样」的设计错误
+│   ├── week3-linux-gateway.html    第 3 周：Linux 网关与「网页不能直接查库」的发现
+│   ├── week4-smoke-alarm.html      第 4 周：烟雾告警与「永远不报警」的自锁陷阱
+│   └── pinout-reference.html       终端节点板引脚速查表
 └── assets/
     ├── css/style.css
     └── img/                架构图 / 引脚图 / 路线图 / 实物照片
