@@ -257,6 +257,25 @@ if ( events &amp; GENERICAPP_SEND_MSG_EVT ) {
       这个对照关系比任何日志都直观，因为它是<em>同屏、同时、持续更新</em>的。
     </p>
 
+    <figure>
+      <img src="../assets/img/terminal-net-down.jpg" alt="协调器断电后的终端节点屏幕，显示 NET:DOWN 与 TX:0000"
+           style="max-width:470px">
+      <figcaption>
+        协调器断电。温度、光照、烟雾<strong>照常在刷新</strong>，
+        最后一行 <code>NET:DOWN</code> 转红，<code>TX</code> 停在 <code>0000</code> 一动不动。
+        这就是「在采，但发不出去」的样子。
+      </figcaption>
+    </figure>
+
+    <figure>
+      <img src="../assets/img/terminal-net-join.jpg" alt="终端节点入网后的屏幕，显示 NET:JOIN 与 TX:0008"
+           style="max-width:470px">
+      <figcaption>
+        协调器恢复供电、终端重新入网。<code>NET:JOIN</code> 转绿，
+        <code>TX</code> 开始累加（<code>0008</code>，即已成功发出 8 帧）。
+      </figcaption>
+    </figure>
+
     <h3>顺带治好了黑边</h3>
 
     <p>
