@@ -1,0 +1,355 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>第 2 周：ZigBee 组网，以及一个差点蒙混过关的设计错误 · ZigBee 环境监测系统</title>
+<meta name="author" content="qikai-lab">
+<link rel="canonical" href="https://qikai-lab.github.io/posts/week2-network.html">
+<meta property="og:type" content="article">
+<meta property="og:site_name" content="ZigBee 无线环境监测系统 · 开发手记">
+<meta property="og:url" content="https://qikai-lab.github.io/posts/week2-network.html">
+<meta name="description" content="协调器与终端节点组网打通。但在一次「断网测试」里发现：终端一直没连上协调器时，它连传感器都不采、屏幕也不刷新——采集和上报被错误地绑在了一起。这篇记录这个设计错误的定位与重写。">
+<link rel="stylesheet" href="../assets/css/style.css">
+</head>
+<body>
+
+<header class="site-header">
+  <nav class="nav">
+    <a class="brand" href="../index.html">
+      <span class="brand-mark">ZB</span>
+      <span>ZigBee 环境监测系统</span>
+    </a>
+    <div class="nav-links">
+      <a href="../index.html">首页</a>
+      <a href="project-overview.html">项目全景</a>
+      <a href="week0-bringup.html" class="active">开发日志</a>
+      <a href="pinout-reference.html">引脚速查</a>
+    </div>
+  </nav>
+</header>
+
+<main class="wrap">
+
+  <div class="post-header">
+    <div class="breadcrumb"><a href="../index.html">首页</a> / 开发日志</div>
+    <h1>第 2 周：ZigBee 组网，以及一个差点蒙混过关的设计错误</h1>
+    <div class="post-meta">
+      <span>2026-10-23</span>
+      <span class="dot">·</span>
+      <span class="tag done">第 2 步已通过</span>
+      <span class="tag">Z-Stack</span>
+      <span class="tag">OSAL</span>
+      <span class="tag">设计错误</span>
+    </div>
+  </div>
+
+  <article class="prose">
+
+    <p>
+      组网本身比预想的顺利。<code>GenericApp</code> 工程有两个编译配置，
+      <code>CoordinatorEB</code> 烧协调器板、<code>EndDeviceEB</code> 烧终端板，
+      上电之后协调器自动建网，终端自动入网，串口每秒吐一帧数据。
+      从「两块板子各自跑」到「一块板子收另一块板子的数据」，中间只花了半天。
+    </p>
+
+    <p>
+      真正费时间的是之后的一次测试——<strong>我顺手把协调器断电，想看看终端会怎样，结果发现终端整个停住了</strong>。
+      不是「发不出去」，是连采都不采了，屏幕上的数字凝固在断网前那一帧，一动不动。
+    </p>
+
+    <p>
+      这件事暴露的问题，比组网本身重要得多。
+    </p>
+
+    <h2 id="result">一、先看最终跑成什么样</h2>
+
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr><th>项目</th><th>结果</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>协议栈版本</td><td>Z-Stack 2.5.1a（课程配套版本，<strong>不是 3.0.1</strong>）</td></tr>
+          <tr><td>编译器</td><td>IAR EW8051 6.0 Evaluation</td></tr>
+          <tr><td>工程</td><td><code>Projects/zstack/Samples/GenericApp/CC2530DB/GenericApp.eww</code></td></tr>
+          <tr><td>协调器固件</td><td>CoordinatorEB · 159,493 字节</td></tr>
+          <tr><td>终端固件</td><td>EndDeviceEB · 131,490 字节</td></tr>
+          <tr><td>上报周期</td><td>1.000 秒（实测帧间隔稳定）</td></tr>
+          <tr><td>有效载荷</td><td>24 字节定长帧，<strong>原样透传，不重新组包</strong></td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="callout info">
+      <div class="callout-icon">i</div>
+      <div class="callout-body">
+        <strong>关于版本</strong>：网上大部分 CC2530 教程用的是 Z-Stack 3.0.1（配 IAR 8.10+），
+        而课程配套源码是 2.5.1a。这两者的 <code>GenericApp.c</code> 结构接近但函数签名有差异，
+        <strong>照抄 3.0.1 的代码进 2.5.1a 会编译报错</strong>。先确认版本再搜资料，能省一整天。
+      </div>
+    </div>
+
+    <h2 id="bug">二、那个「顺手一试」暴露的设计错误</h2>
+
+    <p>
+      先把现象描述准确，因为后面的定位全靠它：
+    </p>
+
+    <ul>
+      <li>协调器断电 → 终端板<strong>仍在运行</strong>（心跳灯在闪，按键有反应，继电器能手动开关）</li>
+      <li>但屏幕上温湿度、光照、烟雾<strong>全部冻结</strong>，不再变化</li>
+      <li>把协调器重新上电 → 数据<strong>立刻恢复</strong>，看起来一切正常</li>
+    </ul>
+
+    <p>
+      第二、三条合起来是决定性的：<strong>冻结和恢复都跟着协调器的状态走</strong>。
+      说明不是传感器坏了、不是 I2C/单总线时序挂了、也不是主循环死了——是某段<strong>跟网络状态绑在一起</strong>的代码没跑。
+    </p>
+
+    <h3>根因：一个定时器管了两件事</h3>
+
+    <p>
+      原来的代码结构是这样的（<code>enddevice.c</code>）：
+    </p>
+
+<pre>/* 收到状态变化事件时 */
+if ( GenericApp_NwkState == DEV_END_DEVICE ) {
+    /* 入网成功 → 启动 1 秒周期定时器 */
+    osal_start_timerEx( GenericApp_TaskID,
+                        GENERICAPP_SEND_MSG_EVT,
+                        ENDDEVICE_SEND_MSG_TIMEOUT );
+}
+
+/* 定时器到点 */
+if ( events &amp; GENERICAPP_SEND_MSG_EVT ) {
+    SyncData();                          <span class="c">/* ← 读传感器 + 刷屏 */</span>
+    AF_DataRequest( ... );               <span class="c">/* ← 发给协调器 */</span>
+    osal_start_timerEx( ... );           <span class="c">/* 续下一次 */</span>
+    return ( events ^ GENERICAPP_SEND_MSG_EVT );
+}</pre>
+
+    <p>
+      <strong>「读传感器」和「发数据」被塞进了同一个定时器回调。</strong>
+      而这个定时器的启动条件写的是「入网成功」。
+    </p>
+
+    <p>
+      于是逻辑变成了：<em>没有网络 → 定时器不启动 → 回调不执行 → 传感器不读</em>。
+      一个纯本地动作，被一个远程条件卡住了。这个耦合在功能演示阶段完全看不出来——
+      因为演示时协调器一直开着，网络一直在。只有主动把它弄断，问题才会浮出来。
+    </p>
+
+    <div class="callout danger">
+      <div class="callout-icon">✕</div>
+      <div class="callout-body">
+        <strong>这不是 bug，是设计错误。</strong>
+        bug 是「代码没按写的意图运行」；这里是「代码完全按意图运行了，但意图本身错了」。
+        这类问题调试器帮不上忙，因为没有任何一行代码行为异常。
+      </div>
+    </div>
+
+    <h2 id="fix">三、重写：把采集和上报彻底拆开</h2>
+
+    <p>
+      正确的模型是：<strong>采集是本地职责，上报是网络职责，两者没有因果关系</strong>。
+      入网了就该发，没入网就只采不发。前者不能成为后者的前提。
+    </p>
+
+    <p>改动分三处。第一处是把定时器的启动从「入网事件」挪到初始化：</p>
+
+<pre>static void GenericApp_Init( uint8 task_id )
+{
+    ...
+    /* 定时器上电就跑，跟网络状态无关 */
+    osal_start_timerEx( GenericApp_TaskID,
+                        GENERICAPP_SEND_MSG_EVT,
+                        ENDDEVICE_SEND_MSG_TIMEOUT );
+}</pre>
+
+    <p>
+      第二处是把回调拆成两段，采集无条件执行、上报加门禁：
+    </p>
+
+<pre>if ( events &amp; GENERICAPP_SEND_MSG_EVT ) {
+    SyncData();                          <span class="c">/* 无条件：读传感器 + 刷屏 + 更新本地状态 */</span>
+
+    if ( node_net_state() == NET_ST_JOIN ) {
+        AF_DataRequest( ... );           <span class="c">/* 只有入网了才发 */</span>
+        s_tx_frames++;                   <span class="c">/* 计数只统计真正发出去的 */</span>
+    }
+
+    osal_start_timerEx( ... );
+    return ( events ^ GENERICAPP_SEND_MSG_EVT );
+}</pre>
+
+    <p>第三处是给「网络状态」一个明确的判断函数，而不是散落在各处比较枚举：</p>
+
+<pre>static unsigned char node_net_state(void)
+{
+    switch ( GenericApp_NwkState ) {
+        case DEV_END_DEVICE:
+        case DEV_ROUTER:
+        case DEV_ZB_COORD:  return NET_ST_JOIN;   <span class="c">/* 已入网，可发 */</span>
+        case DEV_INIT:      return NET_ST_INIT;   <span class="c">/* 正在找网 */</span>
+        default:            return NET_ST_DOWN;   <span class="c">/* 掉线 */</span>
+    }
+}</pre>
+
+    <div class="callout warn">
+      <div class="callout-icon">!</div>
+      <div class="callout-body">
+        <strong>拆的时候踩了一个新坑</strong>：一开始我没删 <code>ZDO_STATE_CHANGE</code>
+        里那句 <code>osal_start_timerEx</code>，只在新位置也加了一句。结果是
+        <strong>同一个 event 上挂了两条定时链</strong>，上报间隔从 1.000 秒变成 0.5 秒，
+        射频占空比直接翻倍。OSAL 的 <code>osal_start_timerEx</code> 对同一 event 是<em>覆盖</em>而不是<em>追加</em>，
+        但两条链各自续下一次，就变成了两倍频率。<strong>挪代码的时候，旧的必须删掉。</strong>
+      </div>
+    </div>
+
+    <h3>顺带搞清楚：应用层到底该不该插手入网</h3>
+
+    <p>
+      修的时候我一度想「那我在检测到掉线时主动调 <code>ZDApp_StartJoiningCycle()</code> 重建入网好了」。
+      查源码（<code>ZDApp.c:2853</code>）之后发现这个函数只在 <code>DEV_INIT</code> 和
+      <code>DEV_NWK_DISC</code> 两个状态下有效，其余状态直接返回 <code>FALSE</code>。
+    </p>
+
+    <p>
+      结论是：<strong>协议栈自己会周期性重建入网循环，应用层不该插手</strong>。
+      这种「以为要补一脚，其实人家本来就在跑」的情况，在协议栈开发里很常见——
+      先读源码确认职责边界，比自己加逻辑靠谱。
+    </p>
+
+    <h2 id="ui">四、屏幕上的改动：让「没连上」看得见</h2>
+
+    <p>
+      修完代码，第二个问题浮出来了：<strong>终端不联网的时候，屏幕上没有任何提示</strong>。
+      数据不刷新，和「程序卡死了」在观感上一模一样。这在现场排查时是致命的。
+    </p>
+
+    <p>
+      所以加了一行状态行。原来的版面是三行数据 + 一块图片区，改成四行：
+    </p>
+
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr><th>行</th><th>内容</th><th>说明</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>1</td><td><code>T:24.5C  H:58.0%</code></td><td>温湿度</td></tr>
+          <tr><td>2</td><td><code>LGT: 512  GAS: 36</code></td><td>光照 / 烟雾</td></tr>
+          <tr><td>3</td><td><code>PIR:NO   RLY:OFF</code></td><td>人体 / 继电器</td></tr>
+          <tr><td>4</td><td><code>NET:JOIN TX: 0048</code></td><td><strong>本轮新增</strong>：网络状态 + 已发帧数</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <p>
+      <code>NET</code> 三档用颜色区分：<code>JOIN</code> 绿色、<code>INIT</code> 黄色、<code>DOWN</code> 红色。
+      <code>TX</code> 是<strong>真正发出去</strong>的帧计数——没入网时它就停在那里不动，
+      而上面的数据还在跳。<strong>数据在跳、TX 不动，一眼就是「在采但发不出去」</strong>；
+      两个都不动，才是程序真的卡了。
+    </p>
+
+    <p>
+      这个对照关系比任何日志都直观，因为它是<em>同屏、同时、持续更新</em>的。
+    </p>
+
+    <h3>顺带治好了黑边</h3>
+
+    <p>
+      加行的时候发现面板底色是纯黑（<code>0x0000</code>），而屏幕边框也是黑的，
+      视觉上数据区像是「陷进去了」，上下都拖着一条黑影。把面板底色换成深灰
+      （<code>COLOR_DARKGRAY 0x4208</code>），字背景同步换掉，边框立刻出来了。
+    </p>
+
+    <p>
+      另外因为终端版面从 3 行变 4 行，图片区高度从 96 缩到 92，
+      分隔线跟着上移——但<strong>协调器和终端共用同一个 UI 模块</strong>，
+      这行改动会把已经验收过的协调器版面一起挪掉。
+      所以给协调器单独定义了一个分隔线坐标常量，两边解耦。
+    </p>
+
+    <div class="callout info">
+      <div class="callout-icon">i</div>
+      <div class="callout-body">
+        <strong>共用 UI 模块的教训</strong>：两块板子共用一套绘制代码时，任何「只改终端」的需求，
+        都要先问一句「这个常量协调器也在用吗」。能拆成两个常量就拆，
+        否则每改一次终端，就要重新验收一次协调器。
+      </div>
+    </div>
+
+    <h2 id="hex">五、一个纯工程问题：命令行编译不出 hex</h2>
+
+    <p>
+      用 <code>IarBuild.exe</code> 命令行编译，出来只有 <code>.d51</code>，没有 <code>.hex</code>。
+      IDE 里点 Build 是有的，命令行没有——原因是 hex 转换那一步依赖 <code>.xcl</code>
+      链接文件里的输出配置，而相对路径在不同工作目录下解析不到。
+    </p>
+
+    <p>
+      解法是写个小脚本，编译前把 <code>.xcl</code> 里的输出路径临时改成绝对路径，
+      编译完再还原。这样命令行和 IDE 的行为就一致了。
+    </p>
+
+    <p>
+      这种事不值得花时间研究原理，但必须记下来——<strong>否则下次换了目录又来一遍</strong>。
+    </p>
+
+    <h2 id="lessons">六、这轮真正学到的东西</h2>
+
+    <ol>
+      <li>
+        <strong>「没数据」和「没上报」是两件完全不同的事。</strong>
+        这次的根因就是把它们当成了一件事。判断标准很简单：
+        <em>拔掉网络，本地功能还完整吗？</em>不完整就是耦合错了。
+      </li>
+      <li>
+        <strong>演示能跑通，不代表设计是对的。</strong>
+        所有「只在异常路径才暴露」的设计错误，都需要主动构造异常去撞。
+        这次是顺手断电撞出来的，下次要主动列异常清单。
+      </li>
+      <li>
+        <strong>挪代码时，旧的必须删。</strong>
+        两条定时链同时跑不会报错，只会让周期悄悄变成一半——这种「不报错的错」最难发现。
+      </li>
+      <li>
+        <strong>让状态可见，比让状态正确更重要。</strong>
+        程序正确但看不出状态，排查时和死机没区别。多加一行 <code>NET</code>/<code>TX</code>
+        花的成本极低，救的时间极多。
+      </li>
+      <li>
+        <strong>先确认协议栈版本再搜资料。</strong>
+        2.5.1a 和 3.0.1 的 API 差异足以让「照抄教程」变成一场灾难。
+      </li>
+    </ol>
+
+    <div class="callout success">
+      <div class="callout-icon">→</div>
+      <div class="callout-body">
+        <strong>下一步（第 3 步）</strong>：Ubuntu 上用 C 读串口，把 24 字节帧解出来落进 SQLite，
+        再起一个 HTTP 服务把曲线画到网页上。这一步是整个项目里代码量最大、
+        也最贴近「嵌入式 Linux 应用开发」岗位要求的部分。
+      </div>
+    </div>
+
+    <div class="post-footer">
+      <a class="btn" href="../index.html">← 返回首页</a>
+      <a class="btn btn-primary" href="week3-linux-gateway.html">第 3 周：Linux 网关 →</a>
+    </div>
+
+  </article>
+
+</main>
+
+<footer class="site-footer">
+  <div class="wrap-wide">
+    <span>ZigBee 无线环境监测系统 · 开发手记 · by qikai-lab</span>
+    <span>最近更新：2026-10-24</span>
+  </div>
+</footer>
+
+</body>
+</html>
