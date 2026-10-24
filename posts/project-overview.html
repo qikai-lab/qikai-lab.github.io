@@ -61,8 +61,9 @@
       <div class="callout-icon">i</div>
       <div class="callout-body">
         <strong>电池供电的 CC2530 无线节点</strong>采集温湿度、烟雾、光照与人体感应，
-        经 ZigBee <strong>协调器</strong>汇聚，由 <strong>ESP32 网关</strong>转 MQTT 上云，
-        最终在 <strong>Ubuntu 服务器</strong>落库、出历史曲线，并能从<strong>网页远程控制继电器</strong>。
+        经 ZigBee <strong>协调器</strong>汇聚后从串口送进 <strong>Ubuntu 上的 C 网关</strong>：
+        落库、出历史曲线、判定烟雾告警。下一阶段再接 <strong>ESP32 网关</strong>转 MQTT 上云，
+        最终支持从<strong>网页远程控制继电器</strong>。
       </div>
     </div>
 
@@ -112,7 +113,7 @@
             <td><strong>应用层</strong></td>
             <td>Ubuntu 服务器</td>
             <td>存库、告警、网页展示、命令下发</td>
-            <td>termios/epoll、多线程、SQLite WAL、手写 HTTP</td>
+            <td>termios/epoll 事件循环、SQLite WAL、手写 HTTP、告警状态机</td>
           </tr>
         </tbody>
       </table>
@@ -276,19 +277,19 @@
             <td>1</td>
             <td>传感器采集 + 彩屏显示 + 串口打印</td>
             <td>1~2 周</td>
-            <td>串口能看到四路传感器数据</td>
+            <td><span class="tag done">已完成</span> 串口能看到四路传感器数据</td>
           </tr>
           <tr>
             <td>2</td>
             <td>协调器 + 终端组网</td>
             <td>2 周</td>
-            <td>拔掉 USB 只插电池，协调器仍收到数据</td>
+            <td><span class="tag done">已完成</span> 拔掉 USB 只插电池，协调器仍收到数据</td>
           </tr>
           <tr>
             <td>3</td>
             <td>Ubuntu 写 C 网关服务</td>
             <td>2~3 周</td>
-            <td>浏览器打开网页能看到实时曲线</td>
+            <td><span class="tag done">已完成</span> 浏览器打开网页能看到实时曲线</td>
           </tr>
           <tr>
             <td>4</td>
@@ -300,7 +301,7 @@
             <td>5</td>
             <td>告警 + 远程控制 + 低功耗 + systemd</td>
             <td>2 周</td>
-            <td>完整产品闭环</td>
+            <td><span class="tag warn">部分完成</span> 告警已上线，远控与低功耗待做</td>
           </tr>
         </tbody>
       </table>
@@ -314,48 +315,98 @@
     </p>
 
     <p>
-      所以第 3 步设计成一个真正的 C 服务 <code>gw-server</code>，
-      <strong>单进程五线程</strong>，每个线程负责一类职责：
+      所以第 3 步设计成一个真正的 C 服务 <code>gw</code>——
+      不用任何 Web 框架，从 <code>socket()</code> 开始自己写。
+    </p>
+
+    <h3>原本打算用五线程，最后写成了单线程</h3>
+
+    <p>
+      最初的设计是「采集 / 存储 / 告警 / HTTP 各一个线程，用环形队列串起来」，
+      职责划分得很清楚，也符合一般服务端程序的习惯：
     </p>
 
     <div class="table-wrap">
       <table>
         <thead>
-          <tr><th>线程</th><th>职责</th><th>关键技术</th></tr>
+          <tr><th>原计划线程</th><th>职责</th><th>关键技术</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>采集</td><td>读串口、拆帧、送环形队列</td><td><code>termios</code> raw、USB 掉线重连</td></tr>
+          <tr><td>存储</td><td>批量写 SQLite、事务提交</td><td>WAL、预编译语句</td></tr>
+          <tr><td>告警</td><td>规则判断、触发标记</td><td>条件变量唤醒</td></tr>
+          <tr><td>HTTP</td><td>响应网页请求</td><td>手写 socket 解析 HTTP</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <p>
+      真动手之后改了主意，最终是<strong>单进程单线程</strong>：
+      串口 fd、信号 fd、HTTP 监听 fd、每条 HTTP 连接 fd，
+      全部注册进同一个 <code>epoll</code>，一个循环处理完。没有线程、没有锁、没有跨线程队列。
+    </p>
+
+    <div class="callout info">
+      <div class="callout-icon">i</div>
+      <div class="callout-body">
+        <strong>改主意的理由</strong>：这个系统每秒只来一帧数据、同时最多几个浏览器，
+        并发压力几乎为零。而多线程带来的锁竞争、数据竞态、退出时序问题，
+        调试成本远高于它带来的收益。<br><br>
+        <strong>并发度用不上就先别上</strong>——但要知道怎么上，这是两回事。
+      </div>
+    </div>
+
+    <p>实际的模块划分（每个 <code>.c</code> 一个职责，全部挂在同一个事件循环里）：</p>
+
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr><th>模块</th><th>职责</th><th>关键技术</th></tr>
         </thead>
         <tbody>
           <tr>
-            <td>采集</td>
-            <td>读串口、拆帧、CRC 校验、送环形队列</td>
-            <td><code>termios</code> raw 模式、<code>epoll</code> 边缘触发、USB 掉线自动重连</td>
+            <td><code>gw_serial</code></td>
+            <td>串口非阻塞读写、拔插重连</td>
+            <td><code>termios</code> raw 模式、<code>O_NONBLOCK</code>、<code>EPOLLHUP</code> 重连</td>
           </tr>
           <tr>
-            <td>订阅</td>
-            <td>第 4 步接入后，改为从 MQTT 收数据</td>
-            <td>裸 socket 拼 MQTT 报文，或 <code>libmosquitto</code></td>
+            <td><code>gw_frame</code></td>
+            <td>24 字节定长帧解析</td>
+            <td>帧头匹配、字段范围校验、滑动窗口重同步</td>
           </tr>
           <tr>
-            <td>存储</td>
-            <td>批量写 SQLite，事务提交</td>
-            <td>WAL 模式、预编译语句、批量提交降低 IO</td>
+            <td><code>gw_db</code></td>
+            <td>落库与历史查询</td>
+            <td>SQLite WAL、预处理语句、批量事务、AUTOINCREMENT</td>
           </tr>
           <tr>
-            <td>告警</td>
-            <td>按阈值规则判断，触发蜂鸣器与网页标记</td>
-            <td>条件变量唤醒、环形缓冲</td>
+            <td><code>gw_latest</code></td>
+            <td>进程内最新值快照</td>
+            <td>0 延迟，绕开事务隔离给网页提供实时数据</td>
           </tr>
           <tr>
-            <td>HTTP</td>
-            <td>响应网页请求，接受控制命令</td>
-            <td><strong>手写 socket 解析 HTTP 报文</strong>，不用框架</td>
+            <td><code>gw_filter</code></td>
+            <td>中值滤波、自适应基线</td>
+            <td>五点中值、余数累积 EMA（防整数死区）</td>
+          </tr>
+          <tr>
+            <td><code>gw_alarm</code></td>
+            <td>告警状态机</td>
+            <td>相对倍数判据、迟滞、连续确认、告警中冻结基线</td>
+          </tr>
+          <tr>
+            <td><code>http_srv</code></td>
+            <td>内置 HTTP 服务</td>
+            <td>裸 <code>socket</code> + epoll，网页编进二进制，无外部依赖</td>
           </tr>
         </tbody>
       </table>
     </div>
 
     <p>
-      整个服务由 <code>systemd</code> 托管，支持开机自启、崩溃重启、日志进 journald。
-      设备热插拔、信号处理用 <code>signalfd</code> 转 fd 交给 epoll 统一处理，避免异步信号安全问题。
+      信号处理用 <code>signalfd</code> 把信号转成 fd 交给 epoll 统一处理，
+      避免异步信号安全问题；退出时先提交未落盘事务再关库。
+      <code>systemd</code> 托管属于第 5 步，还没做。
     </p>
 
     <div class="callout warn">
@@ -376,11 +427,11 @@
         </thead>
         <tbody>
           <tr><td>MCU 开发</td><td>CC2530（8051 内核）、寄存器级 GPIO/ADC/UART</td><td>能手写驱动</td></tr>
-          <tr><td>无线协议</td><td>IEEE 802.15.4、ZigBee、Z-Stack 3.0.1</td><td>理解组网流程与地址分配</td></tr>
-          <tr><td>应用协议</td><td>自定义二进制帧 + CRC16-CCITT</td><td>能设计并实现帧同步</td></tr>
+          <tr><td>无线协议</td><td>IEEE 802.15.4、ZigBee、Z-Stack 2.5.1a、OSAL</td><td>理解组网流程与地址分配</td></tr>
+          <tr><td>应用协议</td><td>24 字节定长帧、字段范围校验、滑动窗口重同步</td><td>能设计并实现帧同步</td></tr>
           <tr><td>网关</td><td>ESP32-S3、ESP-IDF、FreeRTOS</td><td>任务划分与队列通信</td></tr>
           <tr><td>物联网协议</td><td>MQTT 3.1.1、QoS、遗嘱、保活</td><td>理解 broker 行为</td></tr>
-          <tr><td>Linux 系统编程</td><td>termios、epoll、signalfd、多线程、条件变量</td><td>能手写事件循环</td></tr>
+          <tr><td>Linux 系统编程</td><td>termios、epoll、signalfd、单线程事件驱动</td><td>能手写事件循环</td></tr>
           <tr><td>数据存储</td><td>SQLite（WAL、事务、索引）</td><td>理解写入性能优化</td></tr>
           <tr><td>网络服务</td><td>HTTP/1.1 报文解析、socket API</td><td>不依赖框架手写</td></tr>
           <tr><td>运维</td><td>systemd unit、journalctl、日志轮转</td><td>能部署并查故障</td></tr>
