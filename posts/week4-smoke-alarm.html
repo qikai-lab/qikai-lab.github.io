@@ -1,0 +1,459 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>第 4 周：烟雾告警，以及最容易写出「永远不报警」的那行代码 · ZigBee 环境监测系统</title>
+<meta name="author" content="qikai-lab">
+<link rel="canonical" href="https://qikai-lab.github.io/posts/week4-smoke-alarm.html">
+<meta property="og:type" content="article">
+<meta property="og:site_name" content="ZigBee 无线环境监测系统 · 开发手记">
+<meta property="og:url" content="https://qikai-lab.github.io/posts/week4-smoke-alarm.html">
+<meta name="description" content="MQ-2 读数没有绝对意义，所以告警不能写死阈值。中值滤波吃尖峰、自适应基线跟漂移、迟滞防反复报——以及一个只要调换两行顺序就会让系统永远不报警的自锁陷阱。">
+<link rel="stylesheet" href="../assets/css/style.css">
+</head>
+<body>
+
+<header class="site-header">
+  <nav class="nav">
+    <a class="brand" href="../index.html">
+      <span class="brand-mark">ZB</span>
+      <span>ZigBee 环境监测系统</span>
+    </a>
+    <div class="nav-links">
+      <a href="../index.html">首页</a>
+      <a href="project-overview.html">项目全景</a>
+      <a href="week0-bringup.html" class="active">开发日志</a>
+      <a href="pinout-reference.html">引脚速查</a>
+    </div>
+  </nav>
+</header>
+
+<main class="wrap">
+
+  <div class="post-header">
+    <div class="breadcrumb"><a href="../index.html">首页</a> / 开发日志</div>
+    <h1>第 4 周：烟雾告警，以及最容易写出「永远不报警」的那行代码</h1>
+    <div class="post-meta">
+      <span>2026-10-24</span>
+      <span class="dot">·</span>
+      <span class="tag done">M4 已通过</span>
+      <span class="tag">信号处理</span>
+      <span class="tag">状态机</span>
+      <span class="tag">告警</span>
+    </div>
+  </div>
+
+  <article class="prose">
+
+    <p>
+      告警功能听起来最简单：设个阈值，超了就报。我一开始也是这么以为的。
+    </p>
+
+    <p>
+      然后看了一眼 MQ-2 的实际读数就卡住了——<strong>这个数字没有任何绝对意义</strong>。
+      同一个传感器，今天基线是 35，装到别人板子上可能是 60；
+      夏天潮的时候偏高，冬天干的时候偏低；用一年之后气敏层老化，还会整体漂移。
+    </p>
+
+    <p>
+      所以 <code>if (gas &gt; 600) alarm()</code> 这种写法，<strong>在这个项目里从第一天起就是错的</strong>。
+      它不是「有时不准」，而是「一定不准，只是不知道什么时候被发现」。
+    </p>
+
+    <h2 id="problem">一、把问题定义清楚</h2>
+
+    <p>
+      告警要回答的其实不是「读数是多少」，而是「<strong>现在比平时异常了多少</strong>」。
+      这个问题有四个子问题，每个都有独立的坑：
+    </p>
+
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr><th>子问题</th><th>现象</th><th>对策</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>单帧尖峰</td><td>偶发一个孤立高点，一报警又立刻消失</td><td>中值滤波</td></tr>
+          <tr><td>基线漂移</td><td>同一段代码，换季节、换器件就不准</td><td>自适应基线</td></tr>
+          <tr><td>阈值附近震荡</td><td>读数在阈值上下抖动，反复报/撤</td><td>迟滞 + 连续确认</td></tr>
+          <tr><td>真异常被当成新常态</td><td>烟持续十分钟，基线自己爬上去，告警自消</td><td>告警期间冻结基线</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <p>
+      最后一行的形势最险：<strong>告警自己把自己关掉了</strong>。这正是后面那个「自锁」陷阱的另一面。
+    </p>
+
+    <h2 id="med">二、中值滤波：只用五帧</h2>
+
+    <p>
+      五个样本的滑动窗口，每次取中间值。理由很简单：
+      <strong>一个孤立的尖峰，在五个数里永远排不到中间</strong>，除非它连出三帧以上。
+    </p>
+
+<pre>窗口内 5 个数排序后取 [2]：
+  [35, 35, <span class="n">900</span>, 36, 35]  →  排序 [35,35,35,36,900]  →  取 35   <span class="c">/* 尖峰被吃 */</span>
+  [35, <span class="n">900</span>, <span class="n">900</span>, <span class="n">900</span>, 36] →  排序 [35,36,900,900,900] →  取 900  <span class="c">/* 真烟雾透传 */</span></pre>
+
+    <p>
+      窗口大小选 5 而不是 3 或 7：3 帧挡不住两帧连跳，7 帧延迟太大（7 秒才出结果）。
+      5 帧是「挡得住干扰」和「反应够快」的折中。
+    </p>
+
+    <p>
+      <strong>细节：窗口没填满时不能返回 0。</strong>
+      上电头 4 秒里窗口只有 1~4 个数，如果直接取 <code>buf[2]</code> 就是 0，
+      中值会从 0 突然跳到正常值——这在告警逻辑里会被判成「从 0 剧烈上涨」，可能误报。
+      所以窗口没满时，只对已填入的部分排序取中。
+    </p>
+
+    <p>
+      排序用插入排序，不用 <code>qsort</code>：n ≤ 5 时插入排序最多比较 10 次，
+      而 <code>qsort</code> 的函数调用开销比这整个排序还大。<strong>小数据量别迷信标准库。</strong>
+    </p>
+
+    <h2 id="baseline">三、自适应基线：一个整数除法的死区</h2>
+
+    <p>
+      基线用慢速指数移动平均，时间常数 τ = 600 秒（十分钟）。
+      也就是基线会慢慢跟上环境变化，但不会跟着一次烟雾事件跑掉。
+    </p>
+
+    <p>教科书写法是：</p>
+
+<pre>base += (gas - base) / tau;</pre>
+
+    <p>
+      <strong>这个写法在这里是坏的。</strong>因为 <code>base</code> 和 <code>gas</code> 都是整数。
+    </p>
+
+    <p>
+      当 <code>|gas - base| &lt; tau</code> 时，整数除法结果是 0，<code>base</code> 一步都不动。
+      而 <code>tau = 600</code>，意味着<strong>差值小于 600 时基线永久冻结</strong>。
+      而 MQ-2 的正常波动全程都在 0~60 之间——<strong>基线永远停在初始值上，一次都不会更新</strong>。
+    </p>
+
+    <div class="callout danger">
+      <div class="callout-icon">✕</div>
+      <div class="callout-body">
+        <strong>这是最阴的一类 bug：代码「看起来」在更新基线。</strong>
+        变量名叫 <code>base</code>，每帧都执行 <code>base += ...</code>，
+        日志里也每次都打印——但它永远是同一个数。<br><br>
+        如果没打日志、也没写测试，这个 bug 会一直潜伏到「传感器老化、基线漂移」那天才爆发。
+        而那时你会以为是传感器坏了。
+      </div>
+    </div>
+
+    <h3>解法：把余数攒起来</h3>
+
+    <p>
+      核心思路是——<strong>差值先攒着，攒够 1 个 τ 再挪一格</strong>，把被整数除法截掉的部分保留下来：
+    </p>
+
+<pre><span class="k">static void</span> baseline_update(gw_baseline_t *b, uint16_t gas, <span class="k">int</span> freeze)
+{
+    <span class="k">int32_t</span> target, step;
+
+    <span class="k">if</span> (!b-&gt;valid) {                              <span class="c">/* 第一帧直接建基线 */</span>
+        b-&gt;base_x100 = (<span class="k">int32_t</span>)gas * 100;
+        b-&gt;acc = 0; b-&gt;valid = 1;
+        <span class="k">return</span>;
+    }
+    <span class="k">if</span> (freeze) { <span class="k">return</span>; }                        <span class="c">/* 告警期间冻结 */</span>
+
+    target = (<span class="k">int32_t</span>)gas * 100;
+    b-&gt;acc += target - b-&gt;base_x100;              <span class="c">/* 差值进累加器，不再被截断 */</span>
+
+    step = b-&gt;acc / (<span class="k">int32_t</span>)b-&gt;tau;
+    <span class="k">if</span> (step != 0) {                             <span class="c">/* 攒够了才挪 */</span>
+        b-&gt;base_x100 += step;
+        b-&gt;acc        -= step * (<span class="k">int32_t</span>)b-&gt;tau;
+    }
+}</pre>
+
+    <p>
+      <code>base_x100</code> 是「基线 × 100」，用定点数保留两位小数，
+      这样即使在整数主轴上挪不动一格，小数部分也在真实地变化。
+    </p>
+
+    <p>
+      改完之后：光滑环境下基线十分钟内缓慢跟上，一次 3 倍烟雾事件不会把基线抬走。
+      <strong>两个目标同时达成。</strong>
+    </p>
+
+    <h2 id="lock">四、那个只要颠倒两行顺序就永远不报警的陷阱</h2>
+
+    <p>
+      这是这篇最想讲的部分。
+    </p>
+
+    <p>
+      有了中值滤波和自适应基线，判定逻辑看起来就是「比值超过 N 倍就报警」。
+      代码写起来自然是：先更新基线，再拿新基线去判定。
+      顺序也很符合直觉——「先把状态刷新到位，再做判断」。
+    </p>
+
+<pre><span class="c">/* 错误顺序 */</span>
+gw_baseline_update(&amp;base, med, 0);     <span class="c">/* 先更新基线 */</span>
+rate = med * 100 / base_value;         <span class="c">/* 再用新基线算倍数 */</span>
+<span class="k">if</span> (rate &gt;= 250) { alarm(); }</pre>
+
+    <p>
+      想想烟来的那一刻发生了什么：<code>med</code> 突然从 35 跳到 90。
+      基线更新一步就把自己往 90 拉了一点点——看起来影响不大。但问题是<strong>这个动作每帧都在做</strong>，
+      而阈值是「2.5 倍」。
+    </p>
+
+    <p>
+      真正致命的地方不在单帧，而在于<strong>基线的更新逻辑里没有「异常期间不动」的判断，
+      于是持续异常会把基线一路推高到异常值本身</strong>——
+      几十分钟后 <code>gas / base</code> 回到 1.0，告警自动解除。
+      而现场还在冒烟。
+    </p>
+
+    <p>
+      更隐蔽的是<strong>首帧</strong>：如果系统正好在烟雾中上电，
+      第一帧就直接成了基线，<code>ratio</code> 永远是 100%，<strong>永远不报警，而且一切正常</strong>。
+    </p>
+
+    <div class="callout warn">
+      <div class="callout-icon">!</div>
+      <div class="callout-body">
+        <strong>「永远不报警」是告警系统里最危险的故障，因为它和「一切正常」的输出完全一样。</strong><br><br>
+        你不会收到任何报错、任何异常日志、任何延迟。系统安静地、完美地工作着，只是永远不会响。
+        而它的价值，全部押在「会响」这一件事上。
+      </div>
+    </div>
+
+    <h3>正确的顺序</h3>
+
+<pre><span class="c">/* 正确顺序：用【旧】基线判，判完再更新 */</span>
+med = gw_medfilt_push(&amp;ctx-&gt;med, e-&gt;gas);
+
+<span class="k">if</span> (!gw_baseline_valid(&amp;ctx-&gt;base))
+    gw_baseline_update(&amp;ctx-&gt;base, med, 0);      <span class="c">/* 首帧先建基线 */</span>
+
+ev = gw_alarm_feed(&amp;ctx-&gt;alarm, med, &amp;ctx-&gt;base, ts);   <span class="c">/* ← 用旧基线判 */</span>
+
+gw_baseline_update(&amp;ctx-&gt;base, med,
+                   ctx-&gt;alarm.state == ALARM_ST_ALARM);  <span class="c">/* ← 判完再更新 */</span></pre>
+
+    <p>
+      两个要点：
+    </p>
+
+    <ul>
+      <li><strong>判定必须用更新前的基线。</strong>否则基线被当前值污染，比值失去意义。</li>
+      <li><strong>告警期间 <code>freeze = 1</code>。</strong>这是第二道保险：
+      即使顺序写对了，持续十分钟的烟雾也足以让基线在解除告警前爬上去。</li>
+    </ul>
+
+    <p>
+      这两行代码的相对顺序，决定了整个功能是「能用」还是「永远不响」。
+      而且<strong>它编译通过、没有警告、代码审查时看着也很合理</strong>。
+    </p>
+
+    <h2 id="hysteresis">五、状态机：为什么解除线必须低于触发线</h2>
+
+    <p>
+      三档状态：<code>NORMAL</code>（正常）、<code>WARN</code>（疑似）、<code>ALARM</code>（告警）。
+    </p>
+
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr><th>参数</th><th>值</th><th>作用</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>触发倍数</td><td>250%（2.5 倍）</td><td>超过进 WARN</td></tr>
+          <tr><td>解除倍数</td><td>150%（1.5 倍）</td><td>低于才可能解除</td></tr>
+          <tr><td>确认帧数</td><td>连续 3 帧</td><td>WARN 持续 3 帧才升 ALARM</td></tr>
+          <tr><td>解除帧数</td><td>连续 10 帧</td><td>ALARM 需连续 10 帧低于解除线</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <p>
+      触发 2.5 倍、解除 1.5 倍，中间这<strong>整整一倍的区间是「死区」</strong>——
+      读数掉回 1.8 倍时不会解除，也不会重新触发，状态保持不变。
+    </p>
+
+    <p>
+      这一步非常关键。如果触发和解除用同一个阈值，读数正好在阈值上下抖动时，
+      状态机会每秒切换一次：告警、解除、告警、解除…… 日志刷屏，数据库里写满一行行碎片记录，
+      而且真正该关心的「一次持续三分钟的烟雾」被切成了几十条。
+    </p>
+
+    <p>
+      为什么会抖动？因为<strong>滤波后的中值本身也有 ±1 的自然波动</strong>（MQ-2 静态时就在跳）。
+      任何单点阈值，只要信号有噪声，就必然在阈值附近反复穿越。
+      这是信号处理的基本结论，不是代码问题。
+    </p>
+
+    <h3>迟滞 + 连续确认，是两层独立的防线</h3>
+
+    <p>
+      迟滞管「幅度」——离阈值多远才算数。
+      连续确认管「时间」——要持续多久才算数。
+    </p>
+
+    <p>
+      触发侧 3 帧（3 秒）比解除侧 10 帧（10 秒）短，是有意的：
+      <strong>漏报的代价远大于误报。</strong>宁可多响一次让人去看一眼，不能少响一次。
+    </p>
+
+    <h2 id="freeze">六、告警记录：一次事件一行，不是一帧一行</h2>
+
+    <p>
+      数据库里存的是<strong>事件</strong>而不是<strong>采样</strong>，这一点很重要：
+    </p>
+
+<pre>alarm(id, node, start_ts, end_ts, base_gas, trig_gas, peak_gas)
+      <span class="c">/* end_ts 为 NULL = 这次告警还在进行中 */</span></pre>
+
+    <p>
+      一次持续三分钟的烟雾，<code>env_data</code> 里有 180 行采样，
+      但 <code>alarm</code> 里只有一行。查「这个月报过几次警」变成一句
+      <code>SELECT COUNT(*)</code>，而不是对着 180 行采样做聚合。
+    </p>
+
+    <h3>一个必须处理的边界：上次是被 kill -9 杀的</h3>
+
+    <p>
+      如果进程在告警期间被 <code>kill -9</code> 或断电，<code>end_ts</code> 就永远停在 <code>NULL</code>。
+      下次启动，库里就躺着一行「进行中」的告警，而它其实早就结束了。
+    </p>
+
+    <p>
+      <strong>这种假记录比没有记录更糟</strong>：网页会一直显示「告警中」。
+    </p>
+
+    <p>
+      所以 <code>gw_db_open()</code> 里加了一句收尾：
+    </p>
+
+<pre><span class="k">UPDATE</span> alarm <span class="k">SET</span> end_ts = start_ts <span class="k">WHERE</span> end_ts <span class="k">IS NULL</span>;</pre>
+
+    <p>
+      把遗留的「进行中」记录就地封口。<strong>启动时做一致性修复，是这类系统的基本功</strong>——
+      正常退出会走 <code>gw_db_alarm_end()</code>，异常退出就靠这一句兜底。
+    </p>
+
+    <h2 id="logs">七、日志长什么样</h2>
+
+    <p>
+      每帧一行，把四个关键数并排打出来，因为<strong>它们的比值才是判据，单看任何一个都没意义</strong>：
+    </p>
+
+<pre><span class="dim">[18:11:22] #48   n1   24.5C 58.0%  lux= 512( 50%)</span>  gas=  36 med=  35 base=  35 100%  PIR=无人  RLY=OFF
+<span class="dim">                                                        ↑原始 ↑滤波 ↑基线  ↑倍数</span></pre>
+
+    <p>异常时行末追加标记，不用另起一行：</p>
+
+<pre>gas=  88 med=  87 base=  35 248%  ...  &lt;&lt;&lt; 疑似
+gas=  92 med=  91 base=  35 260%  ...  &lt;&lt;&lt; 烟雾告警
+<span class="ok">---- [18:11:32] 烟雾告警解除，本次持续 9 秒，峰值 gas=92 ----</span></pre>
+
+    <p>
+      这样一眼能看出到底是「原始值跳了但中值没跳」（干扰）还是
+      「中值也跳了」（真实事件）。<strong>这两个数分开显示，是排干扰的第一手信息。</strong>
+    </p>
+
+    <figure>
+      <img src="../assets/img/gateway-web-alarm.png" alt="网关网页的告警状态：顶部红色横幅显示烟雾告警、当前 2.46 倍基线、峰值 88、已持续 9 秒，烟雾卡片显示 86 raw，烟雾状态为告警中，下方告警记录列出两条历史">
+      <figcaption>告警中的网页：红色横幅、倍数、峰值、持续时长，以及下面两条告警记录</figcaption>
+    </figure>
+
+    <div class="callout info">
+      <div class="callout-icon">i</div>
+      <div class="callout-body">
+        <strong>一个小坑</strong>：解除时的日志本来想打「持续时长」，
+        结果打的是累计总时长——因为 <code>total_sec</code> 是跨多次告警累加的。
+        于是第一条告警明明持续 9 秒，日志写着「持续 34 秒」。
+        后来单独加了 <code>last_sec</code> 存本次时长。
+        <strong>「累计值」和「本次值」要从一开始就分开命名。</strong>
+      </div>
+    </div>
+
+    <h2 id="verify">八、怎么验</h2>
+
+    <p>两条路，先软后硬：</p>
+
+    <ol>
+      <li>
+        <strong>模拟器。</strong>给 Python 模拟节点加了 <code>--smoke</code> 参数：
+        每 60 秒自动跑一轮（8 秒爬升到 3.5 倍 → 12 秒回落），
+        外加一个 39 倍的孤立尖峰，专门验中值滤波确实吃掉了尖峰。
+      </li>
+      <li>
+        <strong>真硬件。</strong>打火机<strong>只按出气不打火</strong>，对着 MQ-2 网罩喷 2 秒。
+        这个操作安全、无明火、气体是丁烷，MQ-2 对它响应很明显。
+      </li>
+    </ol>
+
+    <p>
+      上真机之前，先看基线：<strong>记下平稳状态下的 <code>base=</code> 是多少</strong>。
+      如果基线偏高（比如 60），喷气后可能到不了 2.5 倍，那就得把
+      <code>ALARM_TRIG_PCT</code> 调低。<strong>参数要按实测调，不要凭感觉。</strong>
+    </p>
+
+    <h2 id="lessons">九、这轮最值得记住的</h2>
+
+    <ol>
+      <li>
+        <strong>没有绝对值的东西，就不要用绝对阈值。</strong>
+        MQ-2 的读数受温度、湿度、老化影响，唯一稳定的量是「相对基线的倍数」。
+      </li>
+      <li>
+        <strong>整数除法会制造死区。</strong>
+        <code>x += (target - x) / N</code> 在差值小于 N 时恒为 0。
+        要平滑就攒余数，或者改用定点数。
+      </li>
+      <li>
+        <strong>判定和状态更新之间，顺序有语义。</strong>
+        「先刷新再判断」看着合理，实际会让判据被当前值污染，最坏结果是永远不报警。
+      </li>
+      <li>
+        <strong>告警系统最严重的故障是沉默。</strong>
+        「永远不响」和「一切正常」输出一样，只能靠主动构造异常来区分。
+        所以模拟器和测试用例不是可选项。
+      </li>
+      <li>
+        <strong>存事件，不存采样。</strong>
+        一次告警一行，查询从聚合变成计数。
+      </li>
+      <li>
+        <strong>启动时修数据。</strong>
+        异常退出留下的半截状态，必须在打开时收尾，否则会一直显示错误状态。
+      </li>
+    </ol>
+
+    <div class="callout success">
+      <div class="callout-icon">→</div>
+      <div class="callout-body">
+        <strong>下一步</strong>：systemd 托管 + 掉线续传，然后是把协调器接到 ESP32 上云，
+        让数据脱离局域网；最后才做网页远控继电器——那一步要改 CC2530 的命令解析，
+        属于跨两端改动，风险最高，放最后。
+      </div>
+    </div>
+
+    <div class="post-footer">
+      <a class="btn" href="../index.html">← 返回首页</a>
+      <a class="btn btn-primary" href="week3-linux-gateway.html">← 第 3 周：Linux 网关</a>
+    </div>
+
+  </article>
+
+</main>
+
+<footer class="site-footer">
+  <div class="wrap-wide">
+    <span>ZigBee 无线环境监测系统 · 开发手记 · by qikai-lab</span>
+    <span>最近更新：2026-10-24</span>
+  </div>
+</footer>
+
+</body>
+</html>
