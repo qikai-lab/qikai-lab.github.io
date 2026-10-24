@@ -41,7 +41,8 @@
       <h1>从一块 <em>CC2530</em> 开始，<br>做一个能写进简历的物联网项目</h1>
       <p>
         电池供电的传感器节点采集温湿度、烟雾、光照与人体感应，经 ZigBee 协调器汇聚，
-        由 ESP32 网关转 MQTT 上云，最终在 Ubuntu 服务器落库、出曲线、并能远程控制继电器。
+        串口送进 Ubuntu 上的 C 网关：落库、出曲线、判定烟雾告警。
+        下一阶段接入 ESP32 网关转 MQTT 上云，并支持远程控制继电器。
         这里记录了从零到跑通的每一步，包括所有踩过的坑。
       </p>
 
@@ -59,8 +60,8 @@
           <div class="stat-label">板载外设</div>
         </div>
         <div class="stat">
-          <div class="stat-num">2/6</div>
-          <div class="stat-label">里程碑完成</div>
+          <div class="stat-num">178</div>
+          <div class="stat-label">离线测试断言</div>
         </div>
       </div>
     </div>
@@ -75,10 +76,56 @@
 
     <div class="post-list">
 
+      <a class="post-card" href="posts/week4-smoke-alarm.html">
+        <div class="post-card-top">
+          <span class="post-date">2026-10-24</span>
+          <span class="tag done">第 4 步已通过</span>
+          <span class="tag">信号处理</span>
+          <span class="tag">状态机</span>
+        </div>
+        <h3>第 4 周：烟雾告警，以及最容易写出「永远不报警」的那行代码</h3>
+        <p>
+          MQ-2 的读数没有绝对意义，所以不能写死阈值。中值滤波吃尖峰、自适应基线跟漂移、
+          迟滞防反复报——但真正的坑是判定顺序：只要把「更新基线」写在「判定」前面，
+          系统就会永久保持沉默，而且和「一切正常」输出完全一样。
+        </p>
+      </a>
+
+      <a class="post-card" href="posts/week3-linux-gateway.html">
+        <div class="post-card-top">
+          <span class="post-date">2026-10-24</span>
+          <span class="tag done">第 3 步已通过</span>
+          <span class="tag">Linux C</span>
+          <span class="tag">epoll</span>
+          <span class="tag">SQLite</span>
+        </div>
+        <h3>第 3 周：Linux 网关，以及为什么网页不能直接查数据库</h3>
+        <p>
+          纯 C 写完整链路：termios 串口、epoll 统一事件循环、SQLite WAL 批量提交、
+          手写 socket HTTP、网页编进二进制。核心是一个反直觉的发现——
+          批量提交让「库里最新的那条」永远落后 19 秒，所以实时数据必须走内存。
+        </p>
+      </a>
+
+      <a class="post-card" href="posts/week2-network.html">
+        <div class="post-card-top">
+          <span class="post-date">2026-10-23</span>
+          <span class="tag done">第 2 步已通过</span>
+          <span class="tag">Z-Stack</span>
+          <span class="tag">OSAL</span>
+        </div>
+        <h3>第 2 周：ZigBee 组网，以及一个差点蒙混过关的设计错误</h3>
+        <p>
+          组网只花了半天，真正的问题是顺手一次断网测试撞出来的：终端一直没连上协调器时，
+          它连传感器都不采、屏幕也冻结——采集和上报被错误地绑在了同一个定时器上。
+          这不是 bug，是设计错误。
+        </p>
+      </a>
+
       <a class="post-card" href="posts/week1-sensors.html">
         <div class="post-card-top">
           <span class="post-date">2026-10-23</span>
-          <span class="tag done">M4 已通过</span>
+          <span class="tag done">第 1 步已通过</span>
           <span class="tag">ADC</span>
           <span class="tag">排障复盘</span>
         </div>
@@ -157,7 +204,7 @@
           <tr>
             <td><strong>网络层</strong></td>
             <td>CC2530 协调器 + 终端节点</td>
-            <td>IEEE 802.15.4、Z-Stack 3.0.1、自定义帧协议 + CRC16</td>
+            <td>IEEE 802.15.4、Z-Stack 2.5.1a、OSAL 任务调度、24 字节定长帧 + 字段范围校验</td>
           </tr>
           <tr>
             <td><strong>网关层</strong></td>
@@ -167,7 +214,7 @@
           <tr>
             <td><strong>应用层</strong></td>
             <td>Ubuntu + C 服务端</td>
-            <td>termios / epoll / signalfd、多线程、SQLite WAL、手写 socket HTTP、systemd</td>
+            <td>termios / epoll / signalfd 单线程事件循环、SQLite WAL + 批量事务、手写 socket HTTP、中值滤波 + 自适应基线 + 告警状态机</td>
           </tr>
         </tbody>
       </table>
@@ -180,7 +227,7 @@
 <footer class="site-footer">
   <div class="wrap-wide">
     <span>ZigBee 无线环境监测系统 · 开发手记 · by qikai-lab</span>
-    <span>最近更新：2026-10-22</span>
+    <span>最近更新：2026-10-24</span>
   </div>
 </footer>
 
