@@ -5,7 +5,7 @@
     <rect x="25" y="26" width="252" height="30" rx="15" fill="#ecfdf5" stroke="#a7f3d0" stroke-width="1.2"/>
     <circle cx="45" cy="41" r="7" fill="#059669"/>
     <path d="M 41.8 41 L 44.2 43.4 L 48.4 38.6" fill="none" stroke="#ffffff" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
-    <text x="60" y="45.5" font-size="12.5" font-weight="600" fill="#047857">第 0 周 · 工具链已通关</text>
+    <text x="60" y="45.5" font-size="12.5" font-weight="600" fill="#047857">已完成：第 0 周 ~ 第 3 步</text>
     <text x="975" y="45.5" text-anchor="end" font-size="12" fill="#94a3b8">总工期 10 ~ 13 周</text>
 
     <!-- ============ 连接主干线 ============ -->
@@ -24,8 +24,8 @@
     <text x="45" y="233" font-size="11" fill="#475569">· 温湿度 / 烟雾 / 光照</text>
     <text x="45" y="255" font-size="11" fill="#475569">· 人体感应 + 继电器</text>
     <text x="45" y="277" font-size="11" fill="#475569">· 彩屏显示 + 串口帧</text>
-    <rect x="41" y="296" width="148" height="26" rx="6" fill="#ffffff" stroke="#99f6e4" stroke-width="1"/>
-    <text x="115" y="313" text-anchor="middle" font-size="10.5" fill="#0d9488" font-weight="600">产出：串口能读传感器</text>
+    <rect x="41" y="296" width="148" height="26" rx="6" fill="#f0fdf4" stroke="#6ee7b7" stroke-width="1.2"/>
+    <text x="115" y="313" text-anchor="middle" font-size="10.5" fill="#047857" font-weight="600">✓ 达成：串口能读传感器</text>
 
     <!-- ============================================================
          步骤 2
@@ -41,7 +41,7 @@
     <text x="238" y="255" font-size="11" fill="#475569">· EndDevice 入网</text>
     <text x="238" y="277" font-size="11" fill="#475569">· 电池供电仍在线</text>
     <rect x="234" y="296" width="148" height="26" rx="6" fill="#ffffff" stroke="#a5f3fc" stroke-width="1"/>
-    <text x="308" y="313" text-anchor="middle" font-size="10.5" fill="#0891b2" font-weight="600">产出：两块板无线通信</text>
+    <text x="308" y="313" text-anchor="middle" font-size="10.5" fill="#047857" font-weight="600">✓ 达成：两块板无线通信</text>
 
     <!-- ============================================================
          步骤 3
@@ -56,8 +56,8 @@
     <text x="431" y="233" font-size="11" fill="#475569">· epoll 串口采集</text>
     <text x="431" y="255" font-size="11" fill="#475569">· SQLite 事务 + WAL</text>
     <text x="431" y="277" font-size="11" fill="#475569">· 自写 socket HTTP</text>
-    <rect x="427" y="296" width="148" height="26" rx="6" fill="#ffffff" stroke="#c7d2fe" stroke-width="1"/>
-    <text x="501" y="313" text-anchor="middle" font-size="10.5" fill="#4f46e5" font-weight="600">产出：网页看历史曲线</text>
+    <rect x="427" y="296" width="148" height="26" rx="6" fill="#f0fdf4" stroke="#6ee7b7" stroke-width="1.2"/>
+    <text x="501" y="313" text-anchor="middle" font-size="10.5" fill="#047857" font-weight="600">✓ 达成：网页看历史曲线</text>
 
     <!-- ============================================================
          步骤 4
@@ -88,8 +88,8 @@
     <text x="817" y="233" font-size="11" fill="#475569">· 超限告警推送</text>
     <text x="817" y="255" font-size="11" fill="#475569">· 网页控继电器</text>
     <text x="817" y="277" font-size="11" fill="#475569">· 低功耗 + systemd</text>
-    <rect x="813" y="296" width="148" height="26" rx="6" fill="#ffffff" stroke="#fbcfe8" stroke-width="1"/>
-    <text x="887" y="313" text-anchor="middle" font-size="10.5" fill="#db2777" font-weight="600">产出：完整产品闭环</text>
+    <rect x="813" y="296" width="148" height="26" rx="6" fill="#fffbeb" stroke="#fcd34d" stroke-width="1.2"/>
+    <text x="887" y="313" text-anchor="middle" font-size="10.5" fill="#b45309" font-weight="600">◐ 告警已上线，远控待做</text>
 
     <!-- ============ 底部标注 ============ -->
     <line x1="25" y1="372" x2="975" y2="372" stroke="#f1f5f9" stroke-width="1"/>
