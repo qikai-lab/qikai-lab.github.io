@@ -42,6 +42,7 @@
       <span class="tag">epoll</span>
       <span class="tag">SQLite</span>
       <span class="tag">HTTP</span>
+      <span class="tag">systemd</span>
     </div>
   </div>
 
@@ -424,7 +425,482 @@ Connection: close</pre>
       </div>
     </div>
 
-    <h2 id="lessons">八、这轮的收获</h2>
+    <h2 id="systemd">八、上真机：从 <code>Ctrl+C</code> 到 systemd 服务</h2>
+
+    <p>
+      代码在虚拟机里能跑，和这套东西能<strong>长期跑着</strong>，是两件事。
+      手动 <code>./gw</code> 有三个绕不过去的问题：
+    </p>
+
+    <ul>
+      <li>SSH 一断、终端一关，进程跟着 <code>SIGHUP</code> 一起走；</li>
+      <li>程序自己崩了没人拉起来，网页就一直打不开，直到你想起来去看；</li>
+      <li>虚拟机重启之后什么都不剩，得凭记忆再敲一遍启动命令。</li>
+    </ul>
+
+    <p>
+      所以把它做成 systemd 服务。unit 文件不长，真正需要想清楚的是下面加粗的几行：
+    </p>
+
+<pre>[Unit]
+Description=ZigBee Environment Gateway (serial -&gt; SQLite -&gt; HTTP)
+After=network.target
+
+[Service]
+Type=simple
+User=peng
+<strong>WorkingDirectory</strong>=/home/peng/linux_gateway
+ExecStart=/home/peng/linux_gateway/gw -d /dev/ttyUSB0 -p 8080
+<strong>Restart</strong>=always
+<strong>RestartSec</strong>=3
+<strong>TimeoutStopSec</strong>=10
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target</pre>
+
+    <h3>四个决定</h3>
+
+    <ol>
+      <li>
+        <strong><code>WorkingDirectory</code> 决定 <code>gw.db</code> 落在哪。</strong>
+        数据库路径是相对当前目录的 <code>./gw.db</code>，
+        一旦 working directory 变了，服务会<strong>另起一个新库</strong>从零开始记，
+        而网页上看起来一切正常——只是历史数据凭空消失。
+        设成和手动跑时同一个目录，之前的 324 条就无缝接上了。
+      </li>
+      <li>
+        <strong><code>Restart=always</code> 兜的是进程级故障</strong>：
+        段错误、OOM 被杀、<code>kill -9</code>。3 秒后自己起来，不需要人。
+        但注意它<strong>和程序内的串口重连是两层，不能互相替代</strong>：
+        串口松了应该由代码每秒重试打开，不能让整个进程去死一次再重启，
+        否则画面会闪、内存里的实时快照也会丢。
+      </li>
+      <li>
+        <strong><code>TimeoutStopSec=10</code>。</strong>
+        systemd 停服务时先发 <code>SIGTERM</code>，然后默认<strong>等 90 秒</strong>才
+        <code>SIGKILL</code>。这边提交一个事务只要毫秒级，90 秒的默认值只会在卡住时让人干等。
+      </li>
+      <li>
+        <strong>不用 root 跑。</strong>
+        脚本里用 <code>RUN_USER=${SUDO_USER}</code> 把服务降回普通用户——
+        否则 <code>gw.db</code> 会变成 root 所有，之后想手动看一眼库都得 <code>sudo</code>。
+      </li>
+    </ol>
+
+    <h3>装完长这样</h3>
+
+    <figure>
+      <img src="../assets/img/gw-systemd-status.jpg" alt="systemctl status zigbee-gw 的输出：Loaded 一行为 enabled，Active 为 active (running)，Main PID 2350 (gw)，CGroup 为 /system.slice/zigbee-gw.service；下方是 journalctl 的滚动日志，每 5 帧一行统计，并周期打印烟雾基线">
+      <figcaption>
+        <code>systemctl status zigbee-gw</code> 的头部，加上 <code>journalctl -u zigbee-gw</code> 的日志。
+        <code>enabled</code> 是开机自启，<code>running</code> 是此刻活着，
+        日志里每 5 帧一行 <code>有效帧 / 坏帧 / 残帧 / 重同步 / 入库 / 库错 / 重连</code>，
+        再周期性打一行烟雾的<strong>自适应基线</strong>——这三个数字是判断链路有没有悄悄坏掉的唯一依据。
+      </figcaption>
+    </figure>
+
+    <p>
+      图里 <code>库错=0 重连=0</code> 那一列特别值得盯。
+      它们都是「本来不应该发生」的计数：只要有一个不是 0，说明有问题在发生，
+      但<strong>网页照样能打开、曲线照样在动</strong>——所以不会有人主动去看它，只能靠日志自己喊出来。
+    </p>
+
+    <h3>装完一分钟的实测：所有指标都是 0</h3>
+
+<pre>Oct 26 20:14:57 zigbee-gw[3713]: [20:14:57] #68  n1  19.1C  64.0%  lux= 577( 56%)  gas=  24 med=  24 base=  25  96%  PIR=无人  RLY=OFF
+Oct 26 20:14:55 zigbee-gw[3713]: ---- 有效帧=68  坏帧=0  残帧=0  重同步=0B  入库=68  库错=0  重连=0 ----
+Oct 26 20:14:55 zigbee-gw[3713]: ---- 烟雾：正常  基线=25  倍数=96%  累计告警=0 次 ----</pre>
+
+    <p>
+      <strong>68 帧，坏帧 0，残帧 0，重同步 0 字节，入库 68，库错 0，重连 0。</strong>
+      这一行里最有说服力的是最后两个数：<code>入库</code> 和 <code>有效帧</code> <strong>完全相等</strong>，
+      说明收到的每一帧都落了库，没有一帧在中间掉队。
+    </p>
+
+    <p>
+      <code>入库</code> 比 <code>有效帧</code> 少的时候，问题在 SQLite 那一侧
+      （批量事务没提交、磁盘满、表被锁）；<code>入库</code> 比 <code>有效帧</code> 多是不可能的，
+      真出现了说明计数本身有 bug。这个等式是整条链路最省事的一道体检。
+    </p>
+
+    <h3>把原始字节摊开：24 个字节到底装了什么</h3>
+
+    <p>
+      日志是解析完的结果，要证明<strong>解析层没错</strong>，得看串口上的原始字节。
+      停掉服务，直接抓 3 秒：
+    </p>
+
+<pre>$ sudo timeout 3 od -An -tx1 /dev/ttyUSB0 | head -5
+ 73 74 3a 65 01 13 00 40 01 00 00 00 00 00 41 02
+ 00 00 18 00 00 00 00 00 73 74 3a 65 01 13 00 40
+ 01 00 00 00 00 00 41 02 00 00 18 00 00 00 00 00</pre>
+
+    <p>
+      注意 <code>od</code> 是<strong>每行 16 字节</strong>输出的，而一帧是 <strong>24</strong> 字节——
+      24 不是 16 的整数倍，所以行边界会切在帧中间，光看这个排版根本看不出帧在哪。
+      按 24 字节重排一下，正好两帧、每帧六个四字节组：
+    </p>
+
+<pre>帧1  73 74 3a 65 | 01 13 00 40 | 01 00 00 00 | 00 00 41 02 | 00 00 18 00 | 00 00 00 00
+帧2  73 74 3a 65 | 01 13 00 40 | 01 00 00 00 | 00 00 41 02 | 00 00 18 00 | 00 00 00 00</pre>
+
+    <p>
+      两帧完全一样，说明这一秒里环境没有任何变化。<strong>要验证解析对不对，
+      必须按 24 对齐再看</strong>——直接照着 <code>od</code> 的 16 字节行去读，会一直错位。
+    </p>
+
+    <p>按协议逐个字段对一遍：</p>
+
+    <table>
+      <thead>
+        <tr><th>偏移</th><th>字节</th><th>字段</th><th>解出来</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>0–3</td><td><code>73 74 3a 65</code></td><td>帧头</td><td>ASCII <code>"st:e"</code></td></tr>
+        <tr><td>4</td><td><code>01</code></td><td>温度 小数位</td><td>1</td></tr>
+        <tr><td>5</td><td><code>13</code></td><td>温度 整数位</td><td>19 &nbsp;→&nbsp; <strong>19.1 ℃</strong></td></tr>
+        <tr><td>6</td><td><code>00</code></td><td>湿度 小数位</td><td>0</td></tr>
+        <tr><td>7</td><td><code>40</code></td><td>湿度 整数位</td><td>64 &nbsp;→&nbsp; <strong>64.0 %</strong></td></tr>
+        <tr><td>8</td><td><code>01</code></td><td>节点号</td><td>节点 1</td></tr>
+        <tr><td>9–11</td><td><code>00 00 00</code></td><td>xyz</td><td>预留</td></tr>
+        <tr><td>12–13</td><td><code>00 00</code></td><td>人体红外</td><td>0 → 无人</td></tr>
+        <tr><td>14–15</td><td><code>41 02</code></td><td>光照（小端）</td><td>0x0241 = <strong>577</strong></td></tr>
+        <tr><td>16–17</td><td><code>00 00</code></td><td>预留</td><td>—</td></tr>
+        <tr><td>18–19</td><td><code>18 00</code></td><td>烟雾（小端）</td><td>0x0018 = <strong>24</strong></td></tr>
+        <tr><td>20–21</td><td><code>00 00</code></td><td>继电器</td><td>0 → OFF</td></tr>
+        <tr><td>22–23</td><td><code>00 00</code></td><td>ADC</td><td>预留</td></tr>
+      </tbody>
+    </table>
+
+    <p>
+      对照上面那行日志 <code>19.1C 64.0% lux=577 gas=24 PIR=无人 RLY=OFF</code>——
+      <strong>七个字段，一个不差。</strong>
+      这才是「协议跑通了」的证据：不是日志看起来合理，而是日志里的每个数字都能在原始字节里指出来。
+    </p>
+
+    <p>
+      顺手还抓到几帧别的：<code>05 13 00 4c</code> → 19.5℃ / 76.0%，
+      <code>04 13 00 48</code> → 19.4℃ / 72.0%。
+      温度和湿度一起往上走，跟前面稳定的 19.1℃ / 64.0% 明显不同——
+      那会儿正好有只手凑近了传感器。<strong>这反而是一份活体证明</strong>：
+      数据确实来自现场的物理量，不是某个固定值在循环播放。
+    </p>
+
+    <div class="callout warn">
+      <div class="callout-icon">!</div>
+      <div class="callout-body">
+        <strong>同一个命令连跑九次，有六次是空输出——而服务日志明明写着每秒一帧。</strong>
+        数据确实在串口上，问题出在观测手段本身：<code>od</code> 的输出走管道时是全缓冲的，
+        3 秒才几十字节，够不到 4 KB 的缓冲上限；<code>timeout</code> 到点用 SIGTERM 结束进程，
+        缓冲区里那些还没落地的内容就一起蒸发了。偶尔能吐出东西，是因为那一轮恰好赶上了
+        <code>od</code> 自己刷出去。<br><br>
+        <strong>「没看到」和「没有」是两件事，而观测工具会让人把前者当成后者。</strong>
+        抓串口别用「直接打到管道」的方式，改成先落盘再看：
+        <code>timeout 5 dd if=/dev/ttyUSB0 of=/tmp/cap.bin bs=24 count=5</code>，
+        然后单独 <code>od -An -tx1 /tmp/cap.bin</code>。<code>dd</code> 是直接 write 系统调用，
+        就算进程被强杀，已经写下去的部分也在文件里。
+      </div>
+    </div>
+
+    <h3>踩到的坑：端口被占，但「我根本没开」</h3>
+
+    <p>
+      装的时候脚本报 <code>8080 已被占用</code> 并退出。我第一反应是「我刚重启过，怎么可能」。
+      一查：
+    </p>
+
+<pre>sudo ss -ltnp | grep :8080
+LISTEN 0  5  0.0.0.0:8080  0.0.0.0:*  users:(("<strong>gw</strong>",pid=1325,fd=9))</pre>
+
+    <p>
+      <strong>确实有个 gw 在跑</strong>，是更早手动起的、终端关掉后没退干净的孤儿进程。
+      <code>sudo pkill -x gw</code> 之后安装就过了。
+    </p>
+
+    <p>
+      这里我改了一版脚本：它原先会武断地说「多半是你手动跑的 <code>./gw</code> 还开着」。
+      猜对了省事，猜错了把人带偏。<strong>检查工具只负责给出事实，判断交给人</strong>——
+      现在它只打印占用者是谁，怎么处理由我看。顺带记一条：
+      <code>ss -ltn</code> 只给端口，<code>ss -ltnp</code> 才给进程名和 PID，排查时必须带 <code>-p</code>。
+    </p>
+
+    <h3>踩到的第二个坑：命令报错了，但什么都没做</h3>
+
+    <p>
+      验证 <code>Restart=always</code> 的办法很直接：把进程 <code>kill -9</code> 掉，看它几秒后会不会自己回来。
+      我给的命令是这么写的：
+    </p>
+
+<pre>PID=$(systemctl show -p MainPID <strong>--value</strong> zigbee-gw)
+sudo kill -9 $PID</pre>
+
+    <p>
+      第一条报 <code>systemctl: unrecognized option '--value'</code>。
+      于是 <code>$PID</code> 是个<strong>空字符串</strong>，第二条等于在没给目标的情况下执行 <code>kill</code>——
+      报一个用法错误，然后<strong>什么也没杀</strong>。
+    </p>
+
+    <p>
+      原因：<code>--value</code> 是 systemd <strong>230</strong> 才加的参数，这台机器是 <strong>229</strong>
+      （<code>systemctl --version</code> 一眼就能看到）。老版本只会输出 <code>MainPID=2350</code> 这种 <code>Key=Value</code>。
+    </p>
+
+    <p>
+      真正值得记下来的是<strong>怎么发现它没生效</strong>。因为 <code>kill</code> 报错之后，
+      <code>systemctl status</code> 依然会打印一段看起来非常健康的输出：
+    </p>
+
+<pre>Active: active (running) since Mon 2026-10-26 17:09:39 CST; <strong>2h 32min ago</strong>
+Main PID: 2350 (gw)</pre>
+
+    <p>
+      只看 <code>active (running)</code>，很容易得出「验证通过，进程活得好好的」这个结论。
+      决定性的是那个 <strong><code>2h 32min ago</code></strong>——
+      如果它真的被杀过又拉起来，这里应该是<strong>几秒</strong>。
+      同理 <code>Main PID: 2350</code> 也是反证：<strong>进程号没变，说明它从没死过。</strong>
+    </p>
+
+    <div class="callout warn">
+      <div class="callout-icon">!</div>
+      <div class="callout-body">
+        <strong>「进程还活着」和「进程死了一次又活过来」在 <code>status</code> 上长得几乎一模一样。</strong>
+        区分它们只需要一个数字：uptime。
+        做这类故障恢复验证时，顺序必须是<strong>先确认「故障真的发生了」，再去看「有没有恢复」</strong>——
+        否则拿到手的是一份看起来通过、实际什么都没测的报告，而这比没测更危险。
+      </div>
+    </div>
+
+    <p>
+      修正后的做法是<strong>不去手动查 PID</strong>，直接让 systemd 自己动手：
+      <code>sudo systemctl kill -s KILL zigbee-gw</code>。
+      这样既绕开了 <code>--value</code> 的版本差异，也不会出现「杀了半天发现目标为空」这种事。
+    </p>
+
+    <h3>踩到的第三个坑：「找不到命令」，但它就在那儿</h3>
+
+    <p>
+      换新包、<code>make</code>、<code>make test</code> 全绿之后，最后一步安装：
+    </p>
+
+<pre>peng@ubuntu:~/linux_gateway$ sudo ./install_service.sh /dev/ttyUSB0 8080
+sudo: ./install_service.sh: <strong>command not found</strong></pre>
+
+    <p>
+      第一反应是「包打漏了」。但紧接着 <code>ls -l</code> 一看，文件好端端躺在当前目录里，
+      内容也完整。<strong>文件不存在和文件存在，shell 说的却是同一句话。</strong>
+    </p>
+
+<pre>-rw-rw-rw- 1 peng peng 3.9K Oct 26 20:05 install_service.sh
+             ↑ 没有 x</pre>
+
+    <p>
+      <strong>权限位是 <code>666</code>——没有可执行位。</strong>
+      而 <code>sudo</code> 在 <code>execve</code> 拿到 <code>EACCES</code> 时，打印的文案就是
+      <code>command not found</code>。它没说「没有执行权限」，它说「找不到」。
+    </p>
+
+    <div class="callout warn">
+      <div class="callout-icon">!</div>
+      <div class="callout-body">
+        <strong>错误文案不等于错误原因。</strong>
+        <code>command not found</code> 至少有三种完全不同的成因：路径不在 <code>PATH</code> 里、
+        文件真的不存在、<strong>文件存在但没有执行位</strong>。三者的修法毫无交集。
+        看到这类提示，第一个动作不是找文件，是 <code>ls -l</code> 看权限位——
+        这一步能把三种可能一次砍掉两种。
+      </div>
+    </div>
+
+    <p>
+      为什么会丢？因为包是在 <strong>Windows 上打的</strong>。
+      Windows 文件系统没有 Unix 权限位，<code>tar</code> 只能填一个默认值，
+      解压出来就统一变成 <code>666</code>。而 <code>make</code> 编出来的 <code>gw</code> 是 Linux 自己产的，
+      权限正常，所以「编译能过、测试能过、只有脚本跑不了」这种组合特别容易误导。
+    </p>
+
+    <p>
+      改了三处，确保它不再复发：
+    </p>
+
+    <ol>
+      <li>
+        <strong>打包时强制设位</strong>：<code>gettarinfo()</code> 拿到的 <code>ti.mode</code> 直接改写成
+        <code>.sh → 0o755</code>、其余 <code>0o644</code>，再 <code>addfile()</code>。
+        不依赖源文件在宿主系统上的权限。
+      </li>
+      <li>
+        <strong>打包脚本自检</strong>：遍历所有 <code>.sh</code>，断言 <code>mode &amp; 0o111</code> 必须非零，
+        不满足直接让打包失败。宁可打不出包，也不要打出一个装不上的包。
+      </li>
+      <li>
+        <strong>脚本自己补位</strong>：<code>install_service.sh</code> 开头加一句
+        <code>chmod +x "$0"</code>。只要用 <code>bash install_service.sh</code> 跑过一次，
+        之后 <code>./</code> 直呼也能用。同时 <code>make install-service</code> 目标改成
+        <code>sudo bash ./install_service.sh</code>，从一开始就不经过执行位。
+      </li>
+    </ol>
+
+    <p>
+      顺带一句：<code>make test</code> 这次是 M5-2b 改动之后的<strong>全量回归</strong>——
+      <code>test_parse</code> 50 项、<code>test_recent</code>、<code>test_filter</code> 36 项、
+      <code>test_http</code> 13 组、<code>test_chain</code> 6 组，全部通过。
+      而且 <code>test_http</code> 的输出里已经能看到新加的
+      <code>"serial_ok":0</code> 字段——<strong>改动真的进了二进制，不是只改了源码</strong>。
+    </p>
+
+    <h3>为什么要优雅退出：<code>kill</code> 掉之后账要对得上</h3>
+
+    <figure>
+      <img src="../assets/img/gw-graceful-shutdown.jpg" alt="手动运行结束后终端打印：收到信号 2，正在优雅关闭；提交未落盘数据并关闭资源；库内累计 324 条；本次运行：有效帧=49 坏帧=0 残帧=0 入库=49 入库失败=0">
+      <figcaption>
+        <code>Ctrl+C</code> 之后。注意最后两行——<strong>本次运行入库 49 条、库里累计 324 条、
+        入库失败 0</strong>。这三个数字能对上，才说明「一帧都没丢」这句话是有依据的，不是感觉。
+      </figcaption>
+    </figure>
+
+    <p>
+      库里是<strong>凑够 20 条提交一次</strong>的。如果退出时直接 <code>exit()</code>，
+      内存里还没提交的那一批就没了——最多丢 20 帧、20 秒的数据。
+      所以 <code>main.c</code> 用 <code>signalfd</code> 监听 <code>SIGINT</code>／<code>SIGTERM</code>，
+      收到之后走一条单独的收尾路径：<strong>提交未落盘事务 → 关串口 → 关库 → 打印本次累计</strong>。
+      手动 <code>Ctrl+C</code> 打的是「信号 2」，<code>systemctl stop</code> 打的是「信号 15」，
+      两者走同一条路，所以日常调试和线上运维不会出现两套行为。
+    </p>
+
+    <div class="callout info">
+      <div class="callout-icon">i</div>
+      <div class="callout-body">
+        <strong>顺手记下：</strong><code>journalctl</code> 默认会进分页器，
+        卡在 <code>(END)</code> 不是死机，按 <code>q</code> 退出；
+        脚本或截图里一律加 <code>--no-pager</code>，一次输出完。
+      </div>
+    </div>
+
+    <h3>验证 <code>Restart=always</code>：真的杀掉了，也真的自己起来了</h3>
+
+    <p>
+      改用 <code>systemctl kill -s KILL</code> 之后，这一次能确认进程真的死了：
+    </p>
+
+<pre>19:47:20 systemd[1]: zigbee-gw.service: Main process exited, code=killed, status=9/KILL
+19:47:20 systemd[1]: zigbee-gw.service: Failed with result 'signal'.
+19:47:24 systemd[1]: zigbee-gw.service: Service hold-off time over, scheduling restart.
+19:47:24 systemd[1]: zigbee-gw.service: Stopped ZigBee Environment Gateway (serial -&gt; SQLite -&gt; HTTP).
+19:47:24 systemd[1]: zigbee-gw.service: Started ZigBee Environment Gateway (serial -&gt; SQLite -&gt; HTTP).</pre>
+
+    <p>
+      <strong>19:47:20 被杀，19:47:24 自己回来，4 秒。</strong>
+      那 4 秒就是 <code>RestartSec=3</code> 加上调度开销。
+      更硬的证据是 PID：新的 <code>Main PID</code> 是 <code>3059</code>，
+      和之前的 <code>2350</code> 不是同一个号——
+      这才是「死过一次又活过来」，而不是「一直活着」。
+    </p>
+
+    <h3>但这次验证顺手炸出一个真问题</h3>
+
+    <p>
+      新起来的 <code>3059</code> 活了不到一秒就退了。原因是当时 USB 转串口被拔掉，
+      而 <code>gw</code> 在<strong>启动时打不开串口就直接 <code>return 1</code></strong>：
+    </p>
+
+<pre>19:47:24 zigbee-gw[3059]: 打开串口 /dev/ttyUSB0 失败: No such file or directory
+19:47:24 systemd[1]: zigbee-gw.service: Main process exited, code=exited, status=1/FAILURE
+Active: <strong>activating (auto-restart)</strong> (Result: exit-code) ... 2s ago</pre>
+
+    <p>
+      <code>Restart=always</code> 忠实地执行了它的职责——每 4 秒拉一次，每次立刻死。
+      这叫<strong>重启风暴</strong>：问题没解决，只是把「一个错误」变成了「每 4 秒一个错误」。
+    </p>
+
+    <p>
+      更糟的是执行顺序：<code>gw</code> 先开串口、后建 HTTP 监听。
+      串口开不出来，<strong>网页也跟着一起挂了</strong>。
+      一根 USB 线松掉，整个系统连「看一眼当前数值」都做不到——
+      而这恰恰是最需要看数据的时候。
+    </p>
+
+    <p>
+      根子上是设计不一致：<strong>「运行中掉线」和「启动时就不在」走了两条完全不同的路。</strong>
+      前者有每秒重连（日志里 <code>重连=1</code> 就是它干的活），后者直接退出、把问题甩给 systemd。
+      同一个故障两种处理，说明这块逻辑还没收敛。
+      正确做法是让启动失败也进主循环，和掉线共用同一条重连路径——
+      <strong>「串口暂时不可用」是一个状态，不是一条死路。</strong>
+    </p>
+
+    <h3>第二次验证：线插回去，它自己就好了</h3>
+
+    <p>
+      把 USB 转串口插回去，中间没有重启过服务、没有人工介入，只等了几分钟再验一次：
+    </p>
+
+<pre>19:53:34 zigbee-gw[3335]:  网页   : http://192.168.236.145:8080/
+19:53:39 zigbee-gw[3335]: ---- 有效帧=0  坏帧=0  残帧=0  重同步=0B  入库=0  库错=0  重连=0 ----
+19:53:40 systemd[1]: zigbee-gw.service: Main process exited, code=killed, status=9/KILL
+19:53:43 systemd[1]: zigbee-gw.service: Started ZigBee Environment Gateway (...)</pre>
+
+    <p>
+      这一轮 <code>Active: active (running) ... ; 2s ago</code>、<code>Main PID: 3343</code>——
+      <strong>3 秒回来，直接进 running</strong>，不再反复失败。
+    </p>
+
+    <p>
+      更有意思的是 <code>3335</code> 那一行：它已经能打印出<strong>完整启动横幅</strong>了，
+      说明串口在<strong>两次验证之间的某一次自动重启里就已经接上了</strong>，全程没有人动过手。
+      这正是 <code>Restart=always</code> 真正的价值——<strong>它兜住了「依赖比进程晚恢复」的时间差。</strong>
+    </p>
+
+    <div class="callout warn">
+      <div class="callout-icon">!</div>
+      <div class="callout-body">
+        <strong><code>Restart=always</code> 只保证「进程会被重新拉起来」，不保证「拉起来能干活」。</strong>
+        如果失败原因是持久的（串口没插、配置文件错、端口被占），它会把一个静态错误变成
+        每 4 秒一次的动态错误，顺带把日志刷满。
+        但这不代表这种做法错了——刚才那段风暴期间它一直在重试，所以线一插上就自己接上了。
+        <strong>问题只在代价：这段时间里网页是挂的，日志在刷。</strong>
+        所以配 <code>Restart=always</code> 的同时必须回答一个问题：
+        <strong>程序在「依赖不可用」时应该是退出，还是应该留在原地等？</strong>
+        对外提供服务的程序，答案通常是后者——进程留着，网页还能开着告诉你「串口未连接」，
+        而不是让你对着一片打不开的页面猜哪里坏了。
+      </div>
+    </div>
+
+    <p>
+      这个问题当天就改掉了。改动只有三处，全部集中在「什么时候该退出」这一个判断上，
+      <strong>没有碰任何业务逻辑</strong>（解析、滤波、基线、告警判定一行没动）：
+    </p>
+
+    <ol>
+      <li>
+        <code>gw_serial_open()</code> 打开失败时，<strong>也要</strong>把目标设备和波特率记下来。
+        原来这两行写在 <code>open()</code> 成功之后，于是「第一次打开失败」会留下一个空设备名的句柄，
+        上层拿它去 <code>reopen()</code> 等于 <code>open("")</code>，永远不可能成功。
+      </li>
+      <li>
+        <code>main.c</code> 启动失败不再 <code>return 1</code>，改成打一行警告、设好下次重连时刻，继续进主循环。
+      </li>
+      <li>
+        往 <code>epoll</code> 里注册串口 fd 之前判一次 <code>fd &gt;= 0</code>，不塞非法 fd。
+      </li>
+    </ol>
+
+    <p>
+      顺带在快照里加了 <code>serial_ok</code> 字段，<code>/api/stats</code> 能读到一个 <code>1/0</code>。
+      这个是必须加的：<strong>「串口没连上」和「连上了但没数据」在数字上完全一样</strong>（都是 0 帧），
+      但一个要去看线、一个要去看节点，修法完全不同。多给一个布尔值，就把这两件事区分开了。
+    </p>
+
+    <div class="callout success">
+      <div class="callout-icon">→</div>
+      <div class="callout-body">
+        <strong>改完两层分工终于清楚了：</strong>
+        程序内负责「依赖暂时不在」（等，不退出，网页照常能开），
+        systemd 负责「进程真的死了」（3 秒拉起来）。
+        之前两者混在一起，串口一松就变成了重启风暴。
+      </div>
+    </div>
+
+    <h2 id="lessons">九、这轮的收获</h2>
 
     <ol>
       <li>
@@ -450,6 +926,11 @@ Connection: close</pre>
         <strong>能离线测的逻辑就别上板子测。</strong>
         178 项断言本机跑完只要一秒，上板子跑一轮要五分钟。这个杠杆率极高。
       </li>
+      <li>
+        <strong>「跑通了」和「能一直跑」是两个验收标准。</strong>
+        前者看日志有没有数据，后者要看三件事：崩了自己起得来、串口掉了接得上、重启之后数据还在。
+        这三条都不在功能需求里，但一条不满足，这套东西就只能演示、不能交付。
+      </li>
     </ol>
 
     <div class="callout success">
@@ -473,7 +954,7 @@ Connection: close</pre>
 <footer class="site-footer">
   <div class="wrap-wide">
     <span>ZigBee 无线环境监测系统 · 开发手记 · by qikai-lab</span>
-    <span>最近更新：2026-10-24</span>
+    <span>最近更新：2026-10-26</span>
   </div>
 </footer>
 
