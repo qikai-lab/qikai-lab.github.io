@@ -60,6 +60,14 @@
       这篇主要讲这三个。
     </p>
 
+    <p>
+      本文对应的全部源码在
+      <a href="../code/linux_gateway/"><code>code/linux_gateway/</code></a>，
+      含 178 项离线断言和一把装服务用的 <code>install_service.sh</code>。
+      <strong>没有硬件也能跑通全链路</strong>——<code>tools/sim_node.py</code>
+      会用 socat 造一对虚拟串口，按真实帧格式往里灌数据。
+    </p>
+
     <h2 id="arch">一、整体结构</h2>
 
 <pre> CC2530 终端 ──ZigBee──&gt; 协调器 ──UART 115200──&gt; Ubuntu 网关
