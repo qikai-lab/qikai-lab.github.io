@@ -301,7 +301,7 @@
             <td>5</td>
             <td>告警 + 远程控制 + 低功耗 + systemd</td>
             <td>2 周</td>
-            <td><span class="tag warn">部分完成</span> 告警已上线，远控与低功耗待做</td>
+            <td><span class="tag warn">部分完成</span> 告警 + systemd 服务化已上线，远控与低功耗待做</td>
           </tr>
         </tbody>
       </table>
@@ -406,7 +406,8 @@
     <p>
       信号处理用 <code>signalfd</code> 把信号转成 fd 交给 epoll 统一处理，
       避免异步信号安全问题；退出时先提交未落盘事务再关库。
-      <code>systemd</code> 托管属于第 5 步，还没做。
+      <code>systemd</code> 托管已做完：<code>Restart=always</code> + 开机自启 + journald，
+      实测 <code>kill -9</code> 后 3 秒自动拉起。
     </p>
 
     <div class="callout warn">
