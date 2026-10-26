@@ -1,0 +1,320 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>环境监测 · ZigBee 网关（离线预览）</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:#0b1015;color:#e6edf3;font:14px/1.5 -apple-system,"Segoe UI","Microsoft YaHei",sans-serif;padding:16px;max-width:820px;margin:0 auto}
+header{display:flex;align-items:baseline;gap:12px;flex-wrap:wrap;margin-bottom:14px}
+h1{font-size:18px;font-weight:600;letter-spacing:.5px}
+.meta{margin-left:auto;display:flex;align-items:center;gap:10px;font-size:12px;color:#8b949e}
+.dot{width:8px;height:8px;border-radius:50%;background:#484f58;display:inline-block}
+.dot.on{background:#3fb950;box-shadow:0 0 8px #3fb950}
+.dot.off{background:#f85149}
+.cards{display:grid;grid-template-columns:repeat(4,1fr);gap:8px}
+.card{background:#151c24;border:1px solid #212b36;border-radius:8px;padding:10px 12px}
+.card label{display:block;font-size:11px;color:#8b949e;margin-bottom:2px}
+.card b{font-size:24px;font-weight:600;font-variant-numeric:tabular-nums}
+.card i{font-size:12px;color:#8b949e;font-style:normal;margin-left:2px}
+.t b{color:#ff7b72}.h b{color:#58a6ff}.l b{color:#f2cc60}.g b{color:#7ee787}
+.flags{margin-top:8px;display:flex;gap:8px}
+.flag{flex:1;background:#151c24;border:1px solid #212b36;border-radius:8px;padding:8px 12px;font-size:12px;display:flex;justify-content:space-between}
+.flag span:first-child{color:#8b949e}
+.on-v{color:#3fb950}.off-v{color:#8b949e}.alarm{color:#f85149;font-weight:600}
+.warn-v{color:#f2cc60;font-weight:600}
+/* 告警横幅：只有出事时才占位置，正常时 display:none 不挤版面 */
+.banner{display:none;margin-bottom:12px;padding:10px 14px;border-radius:8px;
+  border:1px solid #f85149;background:rgba(248,81,73,.12);color:#ff7b72;font-weight:600}
+.banner.warn{border-color:#d29922;background:rgba(210,153,34,.12);color:#f2cc60}
+.banner.show{display:block}
+.banner em{font-style:normal;font-weight:400;font-size:12px;opacity:.85;margin-left:8px}
+.banner.live{animation:bk 1.2s ease-in-out infinite}
+@keyframes bk{50%{background:rgba(248,81,73,.28)}}
+.sub{font-size:10px;color:#8b949e;margin-top:1px;font-variant-numeric:tabular-nums}
+.alist{list-style:none;font-size:12px;font-variant-numeric:tabular-nums}
+.alist li{display:flex;gap:8px;padding:5px 0;border-top:1px solid #1e2833;align-items:baseline}
+.alist li:first-child{border-top:none}
+.alist .t1{color:#8b949e;width:74px;flex:none}
+.alist .pk{color:#ff7b72;width:34px;flex:none;text-align:right}
+.alist .du{color:#484f58;margin-left:auto;flex:none}
+.alist .empty{color:#484f58;padding:4px 0}
+section.chart{margin-top:14px;background:#151c24;border:1px solid #212b36;border-radius:8px;padding:10px 12px}
+section.chart h2{font-size:12px;font-weight:500;color:#8b949e;margin-bottom:6px;display:flex;gap:14px}
+section.chart h2 em{font-style:normal}
+canvas{display:block;width:100%;height:110px}
+.leg{display:inline-flex;align-items:center;gap:4px}
+.leg:before{content:"";width:10px;height:2px;background:currentColor}
+footer{margin-top:14px;font-size:11px;color:#484f58;text-align:center}
+@media(max-width:560px){.cards{grid-template-columns:repeat(2,1fr)}}
+</style>
+</head>
+<body>
+<header>
+  <h1>环境监测</h1>
+  <div class="meta">
+    <span class="dot" id="dot"></span><span id="state">连接中…</span>
+    <span id="time">--:--:--</span><span id="n">#0</span>
+  </div>
+</header>
+
+<div class="banner" id="banner"></div>
+
+<div class="cards">
+  <div class="card t"><label>温度</label><b id="temp">--</b><i>°C</i></div>
+  <div class="card h"><label>湿度</label><b id="hum">--</b><i>%</i></div>
+  <div class="card l"><label>光照</label><b id="lux">--</b><i>%</i></div>
+  <div class="card g"><label>烟雾</label><b id="gas">--</b><i>raw</i>
+    <div class="sub" id="gassub">--</div></div>
+</div>
+
+<div class="flags">
+  <div class="flag"><span>人体红外</span><span id="pir">--</span></div>
+  <div class="flag"><span>继电器</span><span id="rly">--</span></div>
+  <div class="flag"><span>烟雾状态</span><span id="alm">--</span></div>
+</div>
+<div class="flags" style="margin-top:8px">
+  <div class="flag"><span>自适应基线</span><span id="base">--</span></div>
+  <div class="flag"><span>当前倍数</span><span id="ratio">--</span></div>
+  <div class="flag"><span>已收帧</span><span id="frames">--</span></div>
+</div>
+
+<section class="chart">
+  <h2><span class="leg" style="color:#ff7b72">温度 °C</span><span class="leg" style="color:#58a6ff">湿度 %</span></h2>
+  <canvas id="c1"></canvas>
+</section>
+
+<section class="chart">
+  <h2><span class="leg" style="color:#f2cc60">光照 %</span><span class="leg" style="color:#7ee787">烟雾 raw</span></h2>
+  <canvas id="c2"></canvas>
+</section>
+
+<section class="chart">
+  <h2>告警记录 <em style="color:#484f58;font-weight:400">最近 10 次 · 阈值 基线×2.5</em></h2>
+  <ul class="alist" id="alist"><li class="empty">暂无告警</li></ul>
+</section>
+
+<footer>CC2530 节点 → 协调器 → Linux 网关 · 每 2 秒刷新</footer>
+
+<script>
+/* ===== 预览专用（真实部署时没有这一段）=====
+   没有网关时用假数据跑一遍，目的是让新 UI 能在浏览器里当场看到效果。 */
+(function () {
+  var t0 = Math.floor(Date.now() / 1000) - 60, hist = [], i;
+  for (i = 0; i < 60; i++) {
+    hist.push({ ts: t0 + i, node: 1,
+      temp: 24 + Math.sin(i / 8) * 0.6,
+      hum: 58 + Math.cos(i / 9) * 3,
+      lux: 480 + ((i * 7) % 60),
+      gas: 34 + (i > 50 ? (i - 50) * 6 : 0),
+      pir: 0, relay: 0 });
+  }
+  var last = hist[hist.length - 1];
+  var latest = { ok: 1, valid: 1, ts: last.ts,
+    time: new Date(last.ts * 1000).toTimeString().slice(0, 8),
+    node: 1, temp: last.temp, hum: last.hum,
+    lux: last.lux, lux_pct: Math.round(last.lux * 100 / 1023),
+    gas: last.gas, gas_med: last.gas - 2, gas_base: 35,
+    gas_pct: Math.round((last.gas - 2) * 100 / 35),
+    pir: 0, relay: 0,
+    alarm: 'alarm', alarm_code: 2, alarm_peak: 88, alarm_total: 2, alarm_sec: 9,
+    frames: 1234, uptime: 600 };
+  var alarms = { ok: 1, count: 2, items: [
+    { id: 2, node: 1, start: last.ts - 9, end: 0, dur: 0,
+      base: 35, trig: 88, peak: 88, open: 1 },
+    { id: 1, node: 1, start: last.ts - 3700, end: last.ts - 3660, dur: 40,
+      base: 35, trig: 90, peak: 320, open: 0 }
+  ] };
+  window.fetch = function (u) {
+    var b = /alarms/.test(u) ? alarms
+          : /history/.test(u) ? { ok: 1, count: hist.length, items: hist }
+          : latest;
+    return Promise.resolve({ json: function () { return Promise.resolve(b); } });
+  };
+})();
+</script>
+<script>
+var $ = function (i) { return document.getElementById(i); };
+var last = [];
+
+function setText(id, v) { var e = $(id); if (e) e.textContent = v; }
+
+/* Y 轴自适应：跨度太小时给一个最小跨度，否则 gas 从 36 到 37
+   会被放大成满屏锯齿，看着像故障 */
+function axisRange(vals, minSpan) {
+  var mn = Math.min.apply(null, vals), mx = Math.max.apply(null, vals);
+  if (mx - mn < minSpan) { var c = (mn + mx) / 2; mn = c - minSpan / 2; mx = c + minSpan / 2; }
+  var pad = (mx - mn) * 0.15;
+  return [mn - pad, mx + pad];
+}
+
+/* 一条线 */
+function line(g, pts, color, W, H, pad, lo, hi) {
+  if (pts.length < 2) return;
+  var iw = W - pad.l - pad.r, ih = H - pad.t - pad.b;
+  var span = (hi - lo) || 1;
+  g.beginPath();
+  g.strokeStyle = color;
+  g.lineWidth = 1.6;
+  g.lineJoin = 'round';
+  for (var i = 0; i < pts.length; i++) {
+    var x = pad.l + iw * i / (pts.length - 1);
+    var y = pad.t + ih * (1 - (pts[i] - lo) / span);
+    if (i === 0) g.moveTo(x, y); else g.lineTo(x, y);
+  }
+  g.stroke();
+  /* 末点画个圆，一眼看到"最新在哪" */
+  var lx = pad.l + iw, ly = pad.t + ih * (1 - (pts[pts.length - 1] - lo) / span);
+  g.beginPath(); g.arc(lx, ly, 2.6, 0, 6.2832); g.fillStyle = color; g.fill();
+}
+
+function drawChart(cv, s1, s2, minSpan1, minSpan2) {
+  var dpr = window.devicePixelRatio || 1;
+  var rect = cv.getBoundingClientRect();
+  if (rect.width < 10) return;
+  cv.width = rect.width * dpr; cv.height = rect.height * dpr;
+  var g = cv.getContext('2d');
+  g.setTransform(dpr, 0, 0, dpr, 0, 0);
+
+  var W = rect.width, H = rect.height, pad = { l: 4, r: 6, t: 6, b: 6 };
+  g.clearRect(0, 0, W, H);
+
+  /* 横向网格 */
+  g.strokeStyle = '#1e2833'; g.lineWidth = 1;
+  for (var i = 0; i <= 3; i++) {
+    var y = pad.t + (H - pad.t - pad.b) * i / 3;
+    g.beginPath(); g.moveTo(pad.l, y); g.lineTo(W - pad.r, y); g.stroke();
+  }
+
+  if (s1.data.length < 2) {
+    g.fillStyle = '#484f58'; g.font = '11px sans-serif';
+    g.fillText('等待数据…', pad.l + 8, H / 2);
+    return;
+  }
+
+  var r1 = axisRange(s1.data, minSpan1);
+  var r2 = axisRange(s2.data, minSpan2);
+  line(g, s1.data, s1.color, W, H, pad, r1[0], r1[1]);
+  line(g, s2.data, s2.color, W, H, pad, r2[0], r2[1]);
+}
+
+function render(l) {
+  setText('temp',   l.valid ? l.temp.toFixed(1) : '--');
+  setText('hum',    l.valid ? l.hum.toFixed(1)  : '--');
+  setText('lux',    l.valid ? l.lux_pct : '--');
+  /* 大数字用滤波后的值：网页要展示的是"判定用的那个数"，
+     原始值放在下面小字里，方便看出滤波做了什么 */
+  setText('gas',    l.valid ? l.gas_med : '--');
+  setText('frames', l.frames || 0);
+  setText('time',   l.time || '--:--:--');
+  setText('n',      '#' + (l.frames || 0));
+
+  setText('gassub', l.valid
+    ? '原始 ' + l.gas + ' · 基线 ' + l.gas_base + ' · ' + (l.gas_pct / 100).toFixed(2) + ' 倍'
+    : '--');
+  setText('base',  l.valid ? l.gas_base : '--');
+  setText('ratio', l.valid ? (l.gas_pct / 100).toFixed(2) + ' 倍' : '--');
+
+  var p = $('pir'), r = $('rly'), a = $('alm'), bn = $('banner');
+  if (l.valid) {
+    p.textContent = l.pir ? '有人' : '无人';
+    p.className = l.pir ? 'alarm' : 'off-v';
+    r.textContent = l.relay ? 'ON' : 'OFF';
+    r.className = l.relay ? 'on-v' : 'off-v';
+
+    if (l.alarm === 'alarm') {
+      a.textContent = '告警中';
+      a.className = 'alarm';
+      bn.className = 'banner show live';
+      bn.innerHTML = '烟雾告警 <em>当前 ' + (l.gas_pct / 100).toFixed(2)
+        + ' 倍基线，峰值 ' + l.alarm_peak + '，已持续 ' + l.alarm_sec + ' 秒</em>';
+    } else if (l.alarm === 'warn') {
+      a.textContent = '疑似';
+      a.className = 'warn-v';
+      bn.className = 'banner warn show';
+      bn.innerHTML = '疑似烟雾，正在连续确认 <em>连续 3 帧超过 2.5 倍才确认</em>';
+    } else {
+      a.textContent = '正常';
+      a.className = 'on-v';
+      bn.className = 'banner';
+    }
+  } else {
+    p.textContent = '--'; p.className = 'off-v';
+    r.textContent = '--'; r.className = 'off-v';
+    a.textContent = '--'; a.className = 'off-v';
+    bn.className = 'banner';
+    setText('gassub', '--'); setText('base', '--'); setText('ratio', '--');
+  }
+}
+
+/* 告警列表：时间是 "MM-DD HH:MM:SS"，时长秒转成人看得懂的写法 */
+function hhmmss(ts) {
+  var d = new Date(ts * 1000);
+  function p2(v) { return (v < 10 ? '0' : '') + v; }
+  return p2(d.getMonth() + 1) + '-' + p2(d.getDate()) + ' '
+       + p2(d.getHours()) + ':' + p2(d.getMinutes()) + ':' + p2(d.getSeconds());
+}
+
+function durTxt(sec) {
+  if (sec < 60) return sec + ' 秒';
+  if (sec < 3600) return Math.floor(sec / 60) + ' 分 ' + (sec % 60) + ' 秒';
+  return Math.floor(sec / 3600) + ' 时 ' + Math.floor((sec % 3600) / 60) + ' 分';
+}
+
+function renderAlarms(list) {
+  var ul = $('alist');
+  if (!list || !list.length) {
+    ul.innerHTML = '<li class="empty">暂无告警 — 说明空气一直干净</li>';
+    return;
+  }
+  var h = '';
+  for (var i = 0; i < list.length && i < 10; i++) {
+    var a = list[i];
+    h += '<li><span class="t1">' + hhmmss(a.start) + '</span>'
+       + '<span>峰值 <b class="pk">' + a.peak + '</b></span>'
+       + '<span style="color:#8b949e">基线 ' + a.base + ' → ' + a.trig + '</span>'
+       + '<span class="du">' + (a.open ? '进行中' : durTxt(a.dur)) + '</span></li>';
+  }
+  ul.innerHTML = h;
+}
+
+function renderCharts(items) {
+  var t = [], h = [], x = [], gs = [];
+  for (var i = 0; i < items.length; i++) {
+    t.push(items[i].temp);
+    h.push(items[i].hum);
+    x.push(items[i].lux * 100 / 1023);
+    gs.push(items[i].gas);
+  }
+  drawChart($('c1'), { data: t, color: '#ff7b72' }, { data: h, color: '#58a6ff' }, 4, 10);
+  drawChart($('c2'), { data: x, color: '#f2cc60' }, { data: gs, color: '#7ee787' }, 20, 20);
+}
+
+function poll() {
+  var ok = true;
+  Promise.all([
+    fetch('/api/latest',  { cache: 'no-store' }).then(function (r) { return r.json(); }),
+    fetch('/api/history?limit=60', { cache: 'no-store' }).then(function (r) { return r.json(); }),
+    fetch('/api/alarms?limit=10',  { cache: 'no-store' }).then(function (r) { return r.json(); })
+  ]).then(function (res) {
+    $('dot').className = 'dot on';
+    setText('state', '在线');
+    render(res[0]);
+    last = (res[1] && res[1].items) || [];
+    renderCharts(last);
+    renderAlarms((res[2] && res[2].items) || []);
+  }).catch(function () {
+    ok = false;
+    $('dot').className = 'dot off';
+    setText('state', '网关无响应');
+  }).then(function () {
+    setTimeout(poll, ok ? 2000 : 4000);
+  });
+}
+
+window.addEventListener('resize', function () { renderCharts(last); });
+poll();
+</script>
+</body>
+</html>
