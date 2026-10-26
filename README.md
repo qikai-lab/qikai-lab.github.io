@@ -71,10 +71,31 @@
 │   ├── week3-linux-gateway.html    第 3 周：Linux 网关与「网页不能直接查库」的发现
 │   ├── week4-smoke-alarm.html      第 4 周：烟雾告警与「永远不报警」的自锁陷阱
 │   └── pinout-reference.html       终端节点板引脚速查表
+├── code/
+│   └── linux_gateway/              Linux 网关源码（100% 自写，含 178 项离线测试）
 └── assets/
     ├── css/style.css
     └── img/                架构图 / 引脚图 / 路线图 / 实物照片
 ```
+
+---
+
+## 源码
+
+`code/linux_gateway/` 是项目第 3 步的完整实现——单进程单线程 C 服务，
+termios 串口 + epoll 事件循环 + SQLite WAL 批量提交 + 手写 socket HTTP + 网页编进二进制。
+
+```bash
+cd code/linux_gateway
+make && make test          # 178 项断言，不需要任何硬件
+python3 tools/sim_node.py --socat   # 无硬件时用虚拟串口跑通全链路
+```
+
+点这里看说明：[`code/README.md`](code/README.md)
+
+CC2530 那一层（终端节点 / 协调器）的工程骨架基于课程提供的 Z-Stack 示例，
+整包公开涉及他人版权，所以没有放进仓库；那部分的关键实现与踩坑写在
+第 1、2 周手记里。
 
 ---
 
