@@ -76,6 +76,24 @@
 
     <div class="post-list">
 
+      <a class="post-card" href="posts/week3-linux-gateway.html">
+        <div class="post-card-top">
+          <span class="post-date">2026-10-26</span>
+          <span class="tag done">第 3 步已通过</span>
+          <span class="tag">Linux C</span>
+          <span class="tag">epoll</span>
+          <span class="tag">SQLite</span>
+          <span class="tag">systemd</span>
+        </div>
+        <h3>第 3 周：Linux 网关，以及为什么网页不能直接查数据库</h3>
+        <p>
+          纯 C 写完整链路：termios 串口、epoll 统一事件循环、SQLite WAL 批量提交、
+          手写 socket HTTP、网页编进二进制。核心是一个反直觉的发现——
+          批量提交让「库里最新的那条」永远落后 19 秒，所以实时数据必须走内存。
+          最后用 systemd 托管：<code>kill -9</code> 后 3 秒自动拉起，开机自启。
+        </p>
+      </a>
+
       <a class="post-card" href="posts/week4-smoke-alarm.html">
         <div class="post-card-top">
           <span class="post-date">2026-10-24</span>
@@ -88,22 +106,6 @@
           MQ-2 的读数没有绝对意义，所以不能写死阈值。中值滤波吃尖峰、自适应基线跟漂移、
           迟滞防反复报——但真正的坑是判定顺序：只要把「更新基线」写在「判定」前面，
           系统就会永久保持沉默，而且和「一切正常」输出完全一样。
-        </p>
-      </a>
-
-      <a class="post-card" href="posts/week3-linux-gateway.html">
-        <div class="post-card-top">
-          <span class="post-date">2026-10-24</span>
-          <span class="tag done">第 3 步已通过</span>
-          <span class="tag">Linux C</span>
-          <span class="tag">epoll</span>
-          <span class="tag">SQLite</span>
-        </div>
-        <h3>第 3 周：Linux 网关，以及为什么网页不能直接查数据库</h3>
-        <p>
-          纯 C 写完整链路：termios 串口、epoll 统一事件循环、SQLite WAL 批量提交、
-          手写 socket HTTP、网页编进二进制。核心是一个反直觉的发现——
-          批量提交让「库里最新的那条」永远落后 19 秒，所以实时数据必须走内存。
         </p>
       </a>
 
@@ -227,7 +229,7 @@
 <footer class="site-footer">
   <div class="wrap-wide">
     <span>ZigBee 无线环境监测系统 · 开发手记 · by qikai-lab</span>
-    <span>最近更新：2026-10-24</span>
+    <span>最近更新：2026-10-26</span>
   </div>
 </footer>
 
