@@ -41,11 +41,11 @@
       <h1>从一块 <em>CC2530</em> 开始，<br>做一个能写进简历的物联网项目</h1>
       <p>
         电池供电的传感器节点采集温湿度、烟雾、光照与人体感应，经 ZigBee 协调器汇聚，
-        串口送进 Ubuntu 上的 C 网关：落库、出曲线、判定烟雾告警。
-        下一阶段接入 ESP32 网关转 MQTT 上云，并支持远程控制继电器。
+        串口送进 Ubuntu 上的 C 网关：落库、出曲线、判定烟雾告警；
+        另一路经 ESP32-S3 转成 MQTT 上云，两条链路并行、互为交叉验证。
         这里记录了从零到跑通的每一步，包括所有踩过的坑。
-        服务端的完整源码在 <a href="code/linux_gateway/">code/linux_gateway/</a>，
-        178 项离线断言无需任何硬件即可复现。
+        服务端源码在 <a href="code/linux_gateway/">code/linux_gateway/</a>（178 项离线断言，
+        无需任何硬件即可复现），网关固件在 <a href="code/esp32_bridge/">code/esp32_bridge/</a>。
       </p>
 
       <div class="hero-stats">
@@ -78,6 +78,24 @@
 
     <div class="post-list">
 
+      <a class="post-card" href="posts/week5-esp32-bridge.html">
+        <div class="post-card-top">
+          <span class="post-date">2026-10-27</span>
+          <span class="tag done">阶段 A 已通过</span>
+          <span class="tag">ESP-IDF</span>
+          <span class="tag">UART</span>
+          <span class="tag">MQTT</span>
+        </div>
+        <h3>第 5 周：ESP32 上云，以及「COM 口在」不等于「板子活着」</h3>
+        <p>
+          协调器的串口信号并联一路喂给 ESP32-S3，走 WiFi + MQTT 上云。
+          三个坑全和代码无关：设备管理器里有 COM 口但主芯片根本没上电；
+          自动下载电路不通，esptool 默认的 <code>default_reset</code>
+          每次把手动进好的下载模式踢掉；新版 EIM 安装器让 <code>idf.py</code> 找不到工具链。
+          附 51 帧零坏帧的验收数据。
+        </p>
+      </a>
+
       <a class="post-card" href="posts/week3-linux-gateway.html">
         <div class="post-card-top">
           <span class="post-date">2026-10-26</span>
@@ -99,7 +117,7 @@
       <a class="post-card" href="posts/week4-smoke-alarm.html">
         <div class="post-card-top">
           <span class="post-date">2026-10-24</span>
-          <span class="tag done">第 4 步已通过</span>
+          <span class="tag done">M4 已通过</span>
           <span class="tag">信号处理</span>
           <span class="tag">状态机</span>
         </div>
@@ -213,7 +231,7 @@
           <tr>
             <td><strong>网关层</strong></td>
             <td>ESP32-S3 N16R8</td>
-            <td>ESP-IDF v5、MQTT、BLE 配网、LWT 遗嘱、双核任务</td>
+            <td>ESP-IDF v5.5、UART 透传 24 字节定长帧、WiFi 状态机与延后重连、MQTT QoS1 + 遗嘱消息（LWT）</td>
           </tr>
           <tr>
             <td><strong>应用层</strong></td>
@@ -231,7 +249,7 @@
 <footer class="site-footer">
   <div class="wrap-wide">
     <span>ZigBee 无线环境监测系统 · 开发手记 · by qikai-lab</span>
-    <span>最近更新：2026-10-26</span>
+    <span>最近更新：2026-10-27</span>
   </div>
 </footer>
 
