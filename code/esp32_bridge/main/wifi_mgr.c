@@ -87,7 +87,14 @@ static void wifi_event_handler(void *arg, esp_event_base_t base,
                 ESP_LOGW(TAG, "  reason=201 表示扫不到这个 AP：SSID 写错了，"
                               "或者它是 5GHz 的（ESP32-S3 只支持 2.4GHz）");
             } else if (d->reason == WIFI_REASON_AUTH_FAIL) {
-                ESP_LOGW(TAG, "  reason=202 表示密码错了");
+                /* 202 不等于「密码一定错」。手机热点在密码正确时也会偶发
+                 * 拒绝一次，2 秒后用同样的密码重连就上去了。所以这里不能
+                 * 直接判死，否则每次自愈都像是在报一个新故障。 */
+                ESP_LOGW(TAG, "  reason=202 认证失败：密码错，或者热点临时拒绝"
+                              "（手机热点偶发，重连同密码通常自愈，不算故障）");
+            } else if (d->reason == WIFI_REASON_4WAY_HANDSHAKE_TIMEOUT) {
+                ESP_LOGW(TAG, "  reason=15 四次握手超时：和 202 同类，"
+                              "多半还是密码/加密方式的问题，不是信号差");
             }
         }
 
