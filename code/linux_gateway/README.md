@@ -218,21 +218,41 @@ make                 # 编出 ./gw
 ```bash
 sudo apt install libmosquitto-dev mosquitto mosquitto-clients
 
-make mqtt_sub                        # 编出 ./mqtt_sub
-./mqtt_sub -h 127.0.0.1 -p 1883 -f ./gw.db
+make mqtt_sub                                    # 编出 ./mqtt_sub
+./mqtt_sub 127.0.0.1 1883 env_mqtt.db            # broker  port  db 文件（三个参数全部可省，有默认值）
 ```
 
-`mqtt_sub` 和 `gw` 是两个独立进程，**共用一个 `gw.db`**（SQLite WAL 允许多进程读写）：
+参数是**位置参数**，全部可省略，默认 `127.0.0.1 1883 env_mqtt.db`：
 
-| 进程 | 数据来源 | 写入的表 |
+| 位置 | 含义 | 默认 |
 | --- | --- | --- |
-| `gw` | 串口（CC2530 协调器直连） | `env_data`、`alarm_event` |
-| `mqtt_sub` | MQTT（ESP32 网关上云） | `env_data_mqtt` |
+| `$1` | broker 地址 | `127.0.0.1` |
+| `$2` | 端口 | `1883` |
+| `$3` | SQLite 文件 | `env_mqtt.db` |
 
-两张表结构一致但互不干扰，**同一时刻的数值应当几乎相同**——
-不一致就说明中间某一段坏了，而且能立刻判断是哪条链路的问题。
+`mqtt_sub` 和 `gw` 是**两个独立进程，各自一个数据库文件**（默认 `env_mqtt.db` 与 `gw.db`）：
 
-订阅主题 `zigbee/node1/env`，消息体是一个扁平 JSON：
+| 进程 | 数据来源 | 数据库文件 | 写入的表 |
+| --- | --- | --- | --- |
+| `gw` | 串口（CC2530 协调器直连） | `gw.db` | `env_data`、`alarm_event` |
+| `mqtt_sub` | MQTT（ESP32 网关上云） | `env_mqtt.db` | `env_data_mqtt` |
+
+分成两个文件而不是同一张表，是因为两条链路的**完整性不一样**：
+串口链路本地直连几乎不丢，MQTT 链路有 QoS1 重传（可能重复）也有断线丢包（可能缺失）。
+混在一起就再也分不清「这条是准的还是有疑问的」。
+
+调试期两条链路同时跑，正好能**交叉验证**——同一时刻两边的温湿度、`lux`、`gas` 应该几乎一样：
+
+```bash
+# 两个文件分别查，或者用 ATTACH 拼起来一起看
+sqlite3 gw.db "ATTACH 'env_mqtt.db' AS m;
+  SELECT a.ts, a.temp_x10, b.temp_x10, a.gas, b.gas
+  FROM env_data a JOIN m.env_data_mqtt b ON a.ts = b.ts
+  ORDER BY a.id DESC LIMIT 5;"
+```
+
+订阅主题是 **`zigbee/+/env`**（用 `+` 通配一层，所以 `zigbee/node1/env`、`zigbee/node2/env` 都能收到），
+消息体是一个扁平 JSON：
 
 ```json
 {"node":1,"temp":194,"hum":590,"lux":551,"gas":39,"pir":0,"relay":0}
@@ -241,6 +261,18 @@ make mqtt_sub                        # 编出 ./mqtt_sub
 `temp` / `hum` 是 **×10 定点整数**（194 = 19.4°C），与数据库里 `temp_x10` / `hum_x10`
 的存储口径完全一致，避免在服务端做浮点。字段越界（`lux`/`gas` > 1023、
 `pir`/`relay` 不在 0/1、`node` = 0）整条丢弃。
+
+运行起来的输出：
+
+```
+[DB] 已打开 env_mqtt.db（表 env_data_mqtt）
+[MQTT] 连接 127.0.0.1:1883 ...
+[MQTT] 已连接 broker，订阅 zigbee/+/env (QoS1)
+---- 5s: 收到=5 入库=5 解析失败=0 疑似重复=0 ----
+```
+
+回调里只把消息塞进内存缓冲，主循环攒够 20 条才提交一次事务——
+和 `gw_db.c` 是同一个思路，避免在网络线程里做 SQLite IO。
 
 输出示例：
 
