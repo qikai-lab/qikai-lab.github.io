@@ -12,13 +12,22 @@ OBJS    = $(SRCS:.c=.o)
 HDRS    = gw_serial.h gw_frame.h gw_db.h gw_latest.h \
           gw_filter.h gw_alarm.h http_srv.h http_page.h
 
-all: $(TARGET)
+# 阶段 B：MQTT 订阅入库（独立程序，和 gw 是两条并行链路）
+# Ubuntu 上需要：sudo apt install libmosquitto-dev
+TARGET_MQTT = mqtt_sub
+MQTT_LDLIBS = -lsqlite3 -lmosquitto
+
+all: $(TARGET) $(TARGET_MQTT)
 
 $(TARGET): $(OBJS)
 	$(CC) $(CFLAGS) $(LDFLAGS) -o $@ $(OBJS) $(LDLIBS)
 
 %.o: %.c $(HDRS)
 	$(CC) $(CFLAGS) -I. -c -o $@ $<
+
+# MQTT 订阅程序：单文件，不参与 gw 的 .o 集合，直接编译成可执行文件
+$(TARGET_MQTT): mqtt_sub.c
+	$(CC) $(CFLAGS) -o $@ mqtt_sub.c $(MQTT_LDLIBS)
 
 # 改了 web/index.html 之后重新生成 http_page.h（需要 python3，平时不用跑）
 web:
@@ -82,7 +91,7 @@ logs:
 	journalctl -u zigbee-gw -f
 
 clean:
-	rm -f $(OBJS) $(TARGET)
+	rm -f $(OBJS) $(TARGET) $(TARGET_MQTT)
 	rm -f tests/test_parse tests/test_recent tests/test_filter tests/test_http tests/test_chain
 	rm -f tests/*.exe tests/*.db tests/*.db-wal tests/*.db-shm
 	rm -f *.db *.db-wal *.db-shm
