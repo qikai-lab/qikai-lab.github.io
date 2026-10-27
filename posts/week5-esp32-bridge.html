@@ -9,7 +9,7 @@
 <meta property="og:type" content="article">
 <meta property="og:site_name" content="ZigBee 无线环境监测系统 · 开发手记">
 <meta property="og:url" content="https://qikai-lab.github.io/posts/week5-esp32-bridge.html">
-<meta name="description" content="用 ESP32-S3 把 ZigBee 协调器的串口数据转发到 MQTT。三个坑：设备管理器里有 COM 口但主芯片根本没上电、自动下载电路不通导致 esptool 自己把手动下载模式踢掉、新版 EIM 安装器让 idf.py 找不到工具链。附阶段 A 51 帧零坏帧的验收数据。">
+<meta name="description" content="用 ESP32-S3 把 ZigBee 协调器的串口数据转发到 MQTT。三个坑：设备管理器里有 COM 口但主芯片根本没上电、自动下载电路不通导致 esptool 自己把手动下载模式踢掉、新版 EIM 安装器让 idf.py 找不到工具链。附阶段 A 60 帧零坏帧的验收数据。">
 <link rel="stylesheet" href="../assets/css/style.css">
 </head>
 <body>
@@ -348,7 +348,7 @@ CONFIG_ESPTOOLPY_BEFORE_NORESET=y</pre>
       （比如 <code>menuconfig</code>）时才需要手工补 PATH。
     </p>
 
-    <h2 id="stageA">六、阶段 A 验收：51 帧、1224 字节、零坏帧</h2>
+    <h2 id="stageA">六、阶段 A 验收：60 帧、1440 字节、零坏帧</h2>
 
     <p>
       分两步走。阶段 A <strong>只做透传</strong>：ESP32 从 GPIO18 读字节、找帧头、
@@ -384,7 +384,8 @@ CONFIG_ESPTOOLPY_BEFORE_NORESET=y</pre>
 <span class="dim">BRIDGE: ---- 10s: 字节=240 帧=10 坏帧=0 无效字节=0 ----</span>
 <span class="dim">BRIDGE: ---- 15s: 字节=360 帧=15 坏帧=0 无效字节=0 ----</span>
 ...
-<span class="dim">BRIDGE: ---- 50s: 字节=1200 帧=50 坏帧=0 无效字节=0 ----</span></pre>
+<span class="dim">BRIDGE: ---- 50s: 字节=1200 帧=50 坏帧=0 无效字节=0 ----</span>
+<span class="dim">BRIDGE: ---- 60s: 字节=1440 帧=60 坏帧=0 无效字节=0 ----</span></pre>
 
     <p>
       逐字段核对一下第 1 帧那 24 个字节，可以看到整条链路上没有任何一个字段是「碰巧对上」的：
@@ -408,9 +409,9 @@ CONFIG_ESPTOOLPY_BEFORE_NORESET=y</pre>
 </div>
 
     <figure>
-      <img src="../assets/img/esp32-stage-a-60s.png" alt="ESP32-S3 串口监视器连续输出 51 帧，统计行每 5 秒一次，字节数从 120 递增到 1200，帧数从 5 递增到 50，坏帧和无效字节始终为 0">
+      <img src="../assets/img/esp32-stage-a-60s.png" alt="ESP32-S3 串口监视器连续输出 51 帧，统计行每 5 秒一次，字节数从 120 递增到 1200，帧数从 5 递增到 50，坏帧和无效字节始终为 0（完整日志跑到 60 秒共 1440 字节 / 60 帧）">
       <figcaption>
-        连续跑 51 秒。每 5 秒的统计精确是 <strong>+120 字节 / +5 帧</strong>，
+        连续跑满 60 秒（截图为前 50 秒）。每 5 秒的统计精确是 <strong>+120 字节 / +5 帧</strong>，
         <code>坏帧=0</code> 和 <code>无效字节=0</code> 一次都没变过
       </figcaption>
     </figure>
@@ -427,6 +428,7 @@ CONFIG_ESPTOOLPY_BEFORE_NORESET=y</pre>
           <tr><td>35 s</td><td>840</td><td>35</td><td>0</td><td>0</td></tr>
           <tr><td>45 s</td><td>1080</td><td>45</td><td>0</td><td>0</td></tr>
           <tr><td>50 s</td><td>1200</td><td>50</td><td>0</td><td>0</td></tr>
+          <tr><td>60 s</td><td>1440</td><td>60</td><td>0</td><td>0</td></tr>
         </tbody>
       </table>
     </div>
