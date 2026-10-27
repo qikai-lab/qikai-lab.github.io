@@ -1,0 +1,609 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>第 5 周：ESP32 上云，以及「COM 口在」不等于「板子活着」 · ZigBee 环境监测系统</title>
+<meta name="author" content="qikai-lab">
+<link rel="canonical" href="https://qikai-lab.github.io/posts/week5-esp32-bridge.html">
+<meta property="og:type" content="article">
+<meta property="og:site_name" content="ZigBee 无线环境监测系统 · 开发手记">
+<meta property="og:url" content="https://qikai-lab.github.io/posts/week5-esp32-bridge.html">
+<meta name="description" content="用 ESP32-S3 把 ZigBee 协调器的串口数据转发到 MQTT。三个坑：设备管理器里有 COM 口但主芯片根本没上电、自动下载电路不通导致 esptool 自己把手动下载模式踢掉、新版 EIM 安装器让 idf.py 找不到工具链。附阶段 A 51 帧零坏帧的验收数据。">
+<link rel="stylesheet" href="../assets/css/style.css">
+</head>
+<body>
+
+<header class="site-header">
+  <nav class="nav">
+    <a class="brand" href="../index.html">
+      <span class="brand-mark">ZB</span>
+      <span>ZigBee 环境监测系统</span>
+    </a>
+    <div class="nav-links">
+      <a href="../index.html">首页</a>
+      <a href="project-overview.html">项目全景</a>
+      <a href="week0-bringup.html" class="active">开发日志</a>
+      <a href="pinout-reference.html">引脚速查</a>
+    </div>
+  </nav>
+</header>
+
+<main class="wrap">
+
+  <div class="post-header">
+    <div class="breadcrumb"><a href="../index.html">首页</a> / 开发日志</div>
+    <h1>第 5 周：ESP32 上云，以及「COM 口在」不等于「板子活着」</h1>
+    <div class="post-meta">
+      <span>2026-10-27</span>
+      <span class="dot">·</span>
+      <span class="tag done">阶段 A 已通过</span>
+      <span class="tag">ESP-IDF</span>
+      <span class="tag">UART</span>
+      <span class="tag">MQTT</span>
+      <span class="tag">排障复盘</span>
+    </div>
+  </div>
+
+  <article class="prose">
+
+    <p>
+      前四步做完，数据已经能从电池供电的节点一路走到 Ubuntu 上的网页曲线里。
+      但那条路依赖一根 USB 线——协调器必须插在电脑上。第 4 步要做的是把这一层换成
+      ESP32：协调器的串口信号并联出来喂给 ESP32，ESP32 通过 WiFi 走 MQTT 上云。
+    </p>
+
+    <p>
+      功能本身不复杂，一天能写完。<strong>真正花掉时间的是三个和代码完全无关的坑</strong>——
+      而且每一个的第一个错误结论都是错的。这篇把这三个坑的排查过程完整写下来，
+      因为它们比功能代码本身有价值得多。
+    </p>
+
+    <p>
+      这一阶段的源码在
+      <a href="../code/esp32_bridge/"><code>code/esp32_bridge/</code></a>，
+      服务端的 MQTT 订阅程序在
+      <a href="../code/linux_gateway/"><code>code/linux_gateway/mqtt_sub.c</code></a>。
+    </p>
+
+    <h2 id="why">一、为什么要在中间插一层 ESP32</h2>
+
+    <p>
+      最直接的做法是让协调器一直插在 Ubuntu 机器上，串口读数据。演示能跑，
+      但有两个说不通的地方：
+    </p>
+
+    <ul>
+      <li><strong>位置被锁死。</strong>协调器的射频覆盖范围决定了它必须放在被测现场，
+          而现场没有一台常开的 Ubuntu 机器。</li>
+      <li><strong>数据只在一台机器上。</strong>没有远程访问、没有多客户端、没有告警推送，
+          这套东西永远只能演示给别人看，不能交付给别人用。</li>
+    </ul>
+
+    <p>
+      ESP32 补的正好是这一段：有 WiFi、有 UART、几十块钱、功耗低到能挂充电宝。
+      它在整条链路里的位置是一段<strong>协议转换</strong>——
+      左边是私有的 24 字节定长帧，右边是标准 MQTT，中间做的只有解析和重新封装。
+    </p>
+
+<pre> CC2530 终端 ──ZigBee──> 协调器 P0_3
+                              │
+                              ├──> CH340 ──> USB ──> Ubuntu 网关（继续跑，写 env_data）
+                              │
+                              └──> GPIO18 ──> ESP32-S3 ──WiFi──> MQTT ──> Ubuntu（写 env_data_mqtt）</pre>
+
+    <div class="callout success">
+      <div class="callout-icon">✓</div>
+      <div class="callout-body">
+        <strong>并联取信号带来一个意外的好处：双链路交叉验证。</strong>
+        同一帧数据同时走两条路，分别落在 <code>env_data</code> 和 <code>env_data_mqtt</code>
+        两张表里。<strong>两边同一时刻的数值应该几乎相同</strong>——
+        不一样就说明中间某一段坏了，而且能立刻判断是串口那条坏了还是 WiFi 那条坏了。
+        这是单链路永远给不了的诊断能力。
+      </div>
+    </div>
+
+    <h2 id="wiring">二、接线：从协调器排针上并联取信号</h2>
+
+    <p>
+      协调器板上有四个 2×6 排针（P1/P2/P3/P4）。核对原理图网表后发现
+      <code>P0_2</code> 和 <code>P0_3</code> 是<strong>多点复用</strong>的：它们同时连着
+      LED3/LED4、排针 P2、排针 P4、以及 CH340 的 TXD/RXD。
+    </p>
+
+    <p>
+      这意味着可以<strong>直接从 P4 排针上取信号，而不必断开 CH340</strong>。
+      核心板插在 P1+P2 上，P4 是空着的，正好用。
+    </p>
+
+<div class="table-wrap">
+  <table>
+    <thead>
+      <tr><th>协调器</th><th>ESP32-S3</th><th>作用</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>P4 排针 · 第 4 行左列（印 <code>P03</code>）</td><td><code>GPIO18</code>（U1RXD）</td><td>数据：协调器发，ESP32 收</td></tr>
+      <tr><td>P4 排针 · 第 1 行右列（印 <code>GND</code>）</td><td><code>GND</code></td><td>共地，必须接</td></tr>
+      <tr><td>P4 排针 · 第 1 行左列（印 <code>11</code>）</td><td>—</td><td><strong>3V3，不要接</strong>（两边各自供电）</td></tr>
+    </tbody>
+  </table>
+</div>
+
+    <div class="callout warn">
+      <div class="callout-icon">!</div>
+      <div class="callout-body">
+        <strong>认排针不要数针脚，看丝印。</strong>
+        板上直接在针脚旁印了网络名（<code>P02</code> / <code>P03</code> / <code>GND</code>），按丝印找最稳。
+        我一开始按「从 LED 端往 TFT 方向数第几行」推，结果发现物理编号 11/12 那一行
+        在靠近 LED 的那一端——而 <code>3V3</code> 就紧挨着 <code>GND</code>，
+        数错一格就是电源接电源。
+      </div>
+    </div>
+
+    <p>
+      还有一个顾虑是「LED3/LED4 并联在这根线上会不会影响通信」。看电路就放心了：
+      <code>3V3 → 330Ω → LED → P0_x</code>，引脚<strong>拉低时</strong>LED 才亮（约 4mA），
+      空闲高电平时 LED 不导通、不构成负载。CH340 本来就在这条线上正常收数，
+      再并一个 ESP32 的 RX 是「一驱两收」，电气上没有问题。
+    </p>
+
+    <p>
+      另外，第 4 步<strong>只需要一根信号线</strong>。
+      <code>GPIO17 → P0_2</code> 那条反方向的路暂时不接——那条路是第 5 步远控继电器才需要的，
+      而且到时会撞上一个真问题：CH340 的 TXD 和 ESP32 的 TX 会两个输出顶在同一个网络上。
+      那时候再换 UART 或者加二极管隔离，现在不提前处理。
+    </p>
+
+    <h2 id="trap1">三、坑一：设备管理器里有 COM10，但板子根本没通电</h2>
+
+    <p>
+      这是整个过程里最浪费时间的一个，因为它的第一个错误结论是：
+      <em>「COM 口都在，肯定是驱动和下载模式的问题」</em>。
+    </p>
+
+    <p>
+      现象：VSCode 的 ESP-IDF 插件点 Flash，等半天，报
+    </p>
+
+<pre>Connecting....
+A fatal error occurred: Failed to connect to ESP32-S3: No serial data received.</pre>
+
+    <p>
+      看起来很典型的「没进下载模式」。于是按标准流程操作：按住 BOOT → 点一下 RST →
+      松开 BOOT → 点 Flash。<strong>还是同一个错。</strong>
+    </p>
+
+    <p>
+      但有一条<strong>很刺眼的反证</strong>：同一块板子，用别的烧录软件（比如厂商的 Flash 工具）
+      却能正常识别并下载。如果真是「手柄进不了下载模式」，
+      那别的软件也应该失败——它靠的是同一套 DTR/RTS 时序。
+    </p>
+
+    <p>
+      于是不再猜，直接写脚本测。写了三个诊断脚本：
+    </p>
+
+<div class="table-wrap">
+  <table>
+    <thead>
+      <tr><th>脚本</th><th>做什么</th><th>结论</th></tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><code>tests/peek_port.py</code></td>
+        <td>打开串口读 4 秒，打印字节数与可见字符</td>
+        <td>0 字节，<strong>板子一句话都不说</strong></td>
+      </tr>
+      <tr>
+        <td><code>tests/scan_port.py</code></td>
+        <td>依次试 115200 / 74880 / 9600 / 460800 / 57600 五档波特率</td>
+        <td>五档全 0 字节，<strong>不是波特率问题</strong></td>
+      </tr>
+      <tr>
+        <td><code>tests/probe_bootloader.py</code></td>
+        <td>试 6 种 DTR/RTS 组合，再直接发 ESP32 ROM 的 SYNC 同步包</td>
+        <td>全部无回应，<strong>连 ROM 都没醒</strong></td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+    <p>
+      关键在第三个脚本。<code>probe_bootloader.py</code> 里手写了 ESP32 ROM 的同步握手包：
+      <code>C0</code> + <code>0x08</code> + <code>0x28 0x00</code> + 校验 + 波特率 + 32 个 <code>0x55</code> + <code>C0</code>。
+      如果芯片还活着，哪怕只是在 ROM 里跑，它一定会回一串固定格式的应答。
+      <strong>一个字节都没有，说明芯片没有在跑。</strong>
+    </p>
+
+    <div class="callout danger">
+      <div class="callout-icon">✕</div>
+      <div class="callout-body">
+        <strong>根因：这块板子的 USB 转串口芯片和主芯片是两路供电。</strong>
+        板载 CH343 由 USB 的 5V 直接供着，所以插上 USB 线，
+        Windows 就能正常枚举出一个 <code>COM10</code>、设备管理器里干干净净；
+        但 ESP32-S3 的主芯片需要开发板上那路 3.3V（来自稳压器或板上的供电跳线/开关），
+        <strong>这一路没给电，主芯片就是一块石头</strong>。<br>
+        插上 USB ≠ 板子有电。设备管理器能看到 COM 口，
+        只证明「转串口芯片活着」，完全不能证明「主芯片活着」。
+      </div>
+    </div>
+
+    <p>
+      给了电之后，第一个能拿到的铁证是 ROM 的启动日志：
+    </p>
+
+<pre><span class="ok">rst:0x1 (POWERON),boot:0x8 (SPI_FAST_FLASH_BOOT)</span>
+SPIMEM:0xee
+mode:DIO, clock div:1
+...
+entry 0x403c8918</pre>
+
+    <p>
+      <code>rst:0x1 (POWERON)</code> 是<strong>上电复位</strong>——
+      只有芯片真的被上电才会有这个值。手动按 RST 是 <code>rst:0x3</code>，
+      看门狗是 <code>rst:0x8</code>。所以以后判活只需要看这一行：
+      <strong>能看到 <code>POWERON</code>，就说明供电和串口两件事都是通的。</strong>
+    </p>
+
+    <h2 id="trap2">四、坑二：esptool 每次自己把手动下载模式踢掉</h2>
+
+    <p>
+      供上电以后能烧了，但必须<strong>每次</strong>都按一遍「BOOT + RST」，否则还是
+      <code>No serial data received</code>。查下去发现是两件事叠在一起。
+    </p>
+
+    <h3>第一件：这块板子的自动下载电路不通</h3>
+
+    <p>
+      标准的 ESP32 开发板会把 USB 转串口的 <code>DTR</code> / <code>RTS</code>
+      接到 <code>EN</code> 和 <code>IO0</code> 上，靠两个三极管的时序组合，
+      由 esptool 自动完成「复位 → 进下载模式」。
+      这块板子上这两个控制线拉不动 EN/IO0，所以只能人工按。
+      用别的软件能烧，是因为那些软件用的是「手动进模式 + 立刻连」的保守流程，
+      不依赖 DTR/RTS。
+    </p>
+
+    <h3>第二件（才是真凶）：<code>--before default_reset</code> 的语义</h3>
+
+    <p>
+      esptool 默认带 <code>--before default_reset</code>，
+      意思是<strong>在建立连接之前先复位一次板子</strong>。
+      你刚刚手动按住 BOOT、点 RST 进的那个下载模式，
+      <strong>正好被这行复位命令踢出去了</strong>，于是连接阶段对着一个正常运行的芯片发呆，
+      超时，报 <code>No serial data received</code>。
+    </p>
+
+    <p>
+      修法不是继续跟按键顺序较劲，而是把复位关掉：
+    </p>
+
+<pre><span class="c"># sdkconfig.defaults</span>
+<span class="c"># 烧录前不要自动复位板子</span>
+CONFIG_ESPTOOLPY_BEFORE_NORESET=y</pre>
+
+    <p>
+      改完 <code>sdkconfig</code> 里应当出现
+      <code>CONFIG_ESPTOOLPY_BEFORE="no_reset"</code>，
+      烧录命令行里会带上 <code>--before no_reset</code>——
+      esptool 从此完全不碰复位线，保持你手动进入的下载模式。
+    </p>
+
+    <div class="callout info">
+      <div class="callout-icon">i</div>
+      <div class="callout-body">
+        <strong>为什么「别的软件能烧」这条线索这么重要？</strong>
+        它把可疑范围从「硬件坏了 / 驱动坏了 / 芯片锁了」直接压缩到了「时序流程不一样」。
+        排查时最有价值的信息往往不是报了什么错，
+        而是<strong>同一件事在另一条路径上为什么能成</strong>。
+      </div>
+    </div>
+
+    <h2 id="trap3">五、坑三：新版 EIM 安装器装完，<code>idf.py</code> 找不到工具链</h2>
+
+    <p>
+      ESP-IDF 现在用 EIM（Espressif Installation Manager）安装，
+      目录布局和老式的离线安装器不一样，网上的教程基本都还是老布局，照抄全踩。
+      本机实测遇到三个连锁问题：
+    </p>
+
+<div class="table-wrap">
+  <table>
+    <thead>
+      <tr><th>现象</th><th>根因</th><th>解法</th></tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><code>export.bat</code> 报 <code>This .bat file is for Windows CMD.EXE shell only</code></td>
+        <td>它是 CMD 专用脚本，Git Bash 里跑不了</td>
+        <td>用 PowerShell，或直接用 VSCode 插件</td>
+      </tr>
+      <tr>
+        <td>直接跑 <code>idf.py</code> 报 <code>MSys/Mingw is no longer supported</code></td>
+        <td>ESP-IDF v5 检测到 MSYS 环境直接拒绝，不是警告是硬退出</td>
+        <td>同上，别在 Git Bash 里跑</td>
+      </tr>
+      <tr>
+        <td><code>ERROR: espidf.constraints.v5.5.txt doesn't exist</code></td>
+        <td>EIM 把它放在 <code>C:\Espressif\tools\</code> 下，而 <code>idf_tools.py</code> 去 <code>$IDF_TOOLS_PATH</code> 根目录找</td>
+        <td>复制一份到 <code>C:\Espressif\</code></td>
+      </tr>
+      <tr>
+        <td><code>CMAKE_C_COMPILER xtensa-esp32s3-elf-gcc is not a full path and was not found in the PATH</code></td>
+        <td>EIM <strong>不生成</strong> <code>tools.json</code>，而且工具链目录名带 <code>esp-</code> 前缀（<code>xtensa-esp-elf\esp-14.2.0_20260121\</code>），<code>idf.py</code> 靠目录名自动发现必然失败</td>
+        <td>手工把 <code>...\xtensa-esp-elf\bin</code> 加进 PATH</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+    <p>
+      全套 PATH 其实硬写在
+      <code>Microsoft.v5.5.6.PowerShell_profile.ps1</code> 里，
+      打开就能看到需要加哪些目录——比在报错信息里猜快得多。
+    </p>
+
+    <p>
+      <strong>结论：在 VSCode 里用 ESP-IDF 插件操作最省事</strong>，
+      插件自己会准备好环境。只有在需要跑 <code>idf.py</code> 原生子命令
+      （比如 <code>menuconfig</code>）时才需要手工补 PATH。
+    </p>
+
+    <h2 id="stageA">六、阶段 A 验收：51 帧、1224 字节、零坏帧</h2>
+
+    <p>
+      分两步走。阶段 A <strong>只做透传</strong>：ESP32 从 GPIO18 读字节、找帧头、
+      解析 24 字节、打印到串口。不碰 WiFi、不碰 MQTT。
+      这样出问题时可以确定是串口这一段的问题，不会和网络问题混在一起。
+    </p>
+
+    <p>
+      开机横幅把参数全打在台面上，一眼就能确认配置对不对：
+    </p>
+
+    <figure>
+      <img src="../assets/img/esp32-uart-banner.png" alt="ESP32-S3 串口监视器输出：启动横幅显示接收 GPIO18、发送 GPIO17 暂不接、115200 8-N-1 无流控、24 字节定长帧，随后打印第 1 帧的 24 个原始字节和解析结果 n1 19.4C 59.0% lux=551 gas=39">
+      <figcaption>
+        <code>rst:0x1 (POWERON)</code> 之后的第一件事就是把参数和第一帧原始字节打出来。
+        注意 <code>main_task: Returned from app_main()</code>——<code>app_main</code>
+        只负责创建任务，创建完就该返回，不该在里面死循环
+      </figcaption>
+    </figure>
+
+    <p>
+      每帧都先打 24 个原始字节，再打解析结果。这是故意的：
+      <strong>解析错了要能看出是哪个字节读错</strong>，而不是只看到一个可疑的温湿度。
+    </p>
+
+<pre><span class="dim">BRIDGE: [原始] 第 1 帧 的 24 个字节:</span>
+<span class="ok">73 74 3A 65 04 13 00 38 01 00 00 00 00 00 27 02 00 00 27 00 00 00 00 00 00</span>
+<span class="ok">BRIDGE: [帧 #1] n1 19.4C 59.0% lux= 551( 53%) gas=  39 PIR=有人 RLY=OFF</span>
+<span class="ok">BRIDGE: [帧 #2] n1 19.4C 59.0% lux= 551( 53%) gas=  39 PIR=无人 RLY=OFF</span>
+<span class="ok">BRIDGE: [帧 #3] n1 19.4C 59.0% lux= 551( 53%) gas=  39 PIR=无人 RLY=OFF</span>
+...
+<span class="dim">BRIDGE: ---- 5s: 字节=120 帧=5 坏帧=0 无效字节=0 ----</span>
+<span class="dim">BRIDGE: ---- 10s: 字节=240 帧=10 坏帧=0 无效字节=0 ----</span>
+<span class="dim">BRIDGE: ---- 15s: 字节=360 帧=15 坏帧=0 无效字节=0 ----</span>
+...
+<span class="dim">BRIDGE: ---- 50s: 字节=1200 帧=50 坏帧=0 无效字节=0 ----</span></pre>
+
+    <p>
+      逐字段核对一下第 1 帧那 24 个字节，可以看到整条链路上没有任何一个字段是「碰巧对上」的：
+    </p>
+
+<div class="table-wrap">
+  <table>
+    <thead>
+      <tr><th>偏移</th><th>字节</th><th>含义</th><th>解析结果</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>[0..3]</td><td><code>73 74 3A 65</code></td><td>帧头 "st:e"</td><td>同步成功</td></tr>
+      <tr><td>[4..5]</td><td><code>04 13</code></td><td>温度 分位 / 整数</td><td>19.4 °C</td></tr>
+      <tr><td>[6..7]</td><td><code>00 38</code></td><td>湿度 分位 / 整数</td><td>约 59.0 %RH</td></tr>
+      <tr><td>[8]</td><td><code>01</code></td><td>节点号</td><td>n1</td></tr>
+      <tr><td>[14..15]</td><td><code>27 02</code></td><td>光照 ADC（小端）</td><td>0x0227 = 551 → 53 %</td></tr>
+      <tr><td>[18..19]</td><td><code>27 00</code></td><td>烟雾 ADC（小端）</td><td>0x0027 = 39</td></tr>
+      <tr><td>[20..21]</td><td><code>00 00</code></td><td>继电器状态</td><td>OFF</td></tr>
+    </tbody>
+  </table>
+</div>
+
+    <figure>
+      <img src="../assets/img/esp32-stage-a-60s.png" alt="ESP32-S3 串口监视器连续输出 51 帧，统计行每 5 秒一次，字节数从 120 递增到 1200，帧数从 5 递增到 50，坏帧和无效字节始终为 0">
+      <figcaption>
+        连续跑 51 秒。每 5 秒的统计精确是 <strong>+120 字节 / +5 帧</strong>，
+        <code>坏帧=0</code> 和 <code>无效字节=0</code> 一次都没变过
+      </figcaption>
+    </figure>
+
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr><th>时刻</th><th>累计字节</th><th>累计帧</th><th>坏帧</th><th>无效字节</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>5 s</td><td>120</td><td>5</td><td>0</td><td>0</td></tr>
+          <tr><td>15 s</td><td>360</td><td>15</td><td>0</td><td>0</td></tr>
+          <tr><td>25 s</td><td>600</td><td>25</td><td>0</td><td>0</td></tr>
+          <tr><td>35 s</td><td>840</td><td>35</td><td>0</td><td>0</td></tr>
+          <tr><td>45 s</td><td>1080</td><td>45</td><td>0</td><td>0</td></tr>
+          <tr><td>50 s</td><td>1200</td><td>50</td><td>0</td><td>0</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <p>
+      <strong>这个统计行的设计要点：把三类「坏」分开计数。</strong>
+      <code>坏帧</code>是帧头对上了但字段越界，<code>无效字节</code>是压根没对上帧头被丢掉的字节。
+      两个数都稳定为 0，说明<strong>线路干净、解析器没有在重同步</strong>——
+      如果只有坏帧为 0 而无效字节在涨，那就说明是丢字节导致的失步，两个数是完全不同的故障。
+    </p>
+
+    <p>
+      顺手抓到两个真实的环境变化，可以用来自证数据不是伪造的：
+    </p>
+
+    <ul>
+      <li><strong>湿度缓慢下降</strong>：59.0 % → 58.0 %，发生在第 40 帧附近。</li>
+      <li><strong>烟雾 ADC 单调缓降</strong>：39 → 38 → 37 → 36 → 35。
+          MQ-2 的加热丝温度还在往上稳，基线随之下移——这正是第 4 周做自适应基线的理由。</li>
+      <li><strong>光照在 548 ~ 553 之间小幅抖动</strong>，没有跳变，ADC 采样稳定。</li>
+    </ul>
+
+    <h2 id="stageB">七、阶段 B：WiFi + MQTT 的四个决定</h2>
+
+    <p>
+      阶段 A 通过以后，阶段 B 才是「上云」。代码分成三个模块，各自只管一件事：
+    </p>
+
+<div class="table-wrap">
+  <table>
+    <thead>
+      <tr><th>模块</th><th>职责</th><th>关键的坑</th></tr>
+    </thead>
+    <tbody>
+      <tr><td><code>wifi_mgr.c</code></td><td>连 WiFi、断线重连、暴露 IP 与 RSSI</td><td>NVS 必须先初始化；断开事件里<strong>不能直接重连</strong></td></tr>
+      <tr><td><code>mqtt_pub.c</code></td><td>连 broker、组 JSON、publish</td><td>匿名访问要传 <code>NULL</code> 而不是空串</td></tr>
+      <tr><td><code>main.c</code></td><td>UART 读字节 → 解析 → 交给上面两个</td><td><code>app_main</code> 创建完任务要返回</td></tr>
+    </tbody>
+  </table>
+</div>
+
+    <h3>决定一：断开后延后 2 秒重连，而不是在事件回调里立刻连</h3>
+
+    <p>
+      WiFi 断开事件里直接调 <code>esp_wifi_connect()</code> 会造成<strong>重连风暴</strong>：
+      路由器不在时，每一轮失败都会再触发一次断开事件，日志被刷满，
+      同时把 UART 的打印淹掉——你会以为串口也坏了。改成用一次性定时器延后 2 秒，
+      一次断开只对应一次重连尝试。
+    </p>
+
+    <h3>决定二：QoS 1，允许重复但不允许丢</h3>
+
+    <p>
+      环境数据每秒一条，<strong>丢一条不影响趋势判断，但缺一段会影响曲线</strong>。
+      QoS 0 是「发了就不管」，网络抖动时静默丢包；QoS 2 是四次握手，对这个场景是浪费。
+      QoS 1 允许重复——重复比丢失好处理，服务端加个判重日志就够了。
+    </p>
+
+    <h3>决定三：掉线检测用 MQTT 遗嘱（LWT），不自己轮询</h3>
+
+    <p>
+      ESP32 连上 broker 时同时注册一条<strong>遗嘱消息</strong>：
+      主题 <code>zigbee/node1/status</code>，内容 <code>offline</code>，QoS 1，<strong>retain</strong>。
+      一旦设备异常断线（拔电、WiFi 掉、程序崩），broker 会自动代它发出这条消息。
+    </p>
+
+<pre><span class="c">// 连上之后主动发 online（也带 retain）</span>
+<span class="c">// 异常断线时 broker 代发 offline</span>
+<span class="c">// 新订阅者一上线就能立刻知道「现在设备在不在」——这就是 retain 的作用</span></pre>
+
+    <p>
+      比「服务端定时 ping 设备」可靠得多：设备真的死掉时，ping 是 ping 不通的，
+      但你也分不清是设备死了还是网络断了。<strong>让 broker 来宣布死亡</strong>，语义最准。
+    </p>
+
+    <h3>决定四：断线期间的数据直接丢，只计数，不补发</h3>
+
+    <p>
+      这是个有争议的决定，先说结论：<strong>丢，但记下丢了多少条</strong>。
+    </p>
+
+    <p>
+      如果做本地缓存 + 恢复后补发，看起来「更完整」，实际上会制造一个更麻烦的问题：
+      服务端的入库时间是<strong>到达时间</strong>，几百条补发的数据时间戳全部挤在同一秒，
+      曲线上出现一根垂直的假台阶。<strong>数据看板的价值在于「什么时候发生了什么」，
+      而不是「一共收到了多少条」</strong>——时间错位的数据比缺失的数据更有害。
+    </p>
+
+    <div class="callout info">
+      <div class="callout-icon">i</div>
+      <div class="callout-body">
+        <strong>所以 MQTT 链路的表是单独建的。</strong>
+        <code>env_data</code>（串口链路）和 <code>env_data_mqtt</code>（MQTT 链路）
+        两张表结构一致但互不干扰，各自的时间戳语义都是「我这一侧收到它的时刻」。
+        想补齐精确时间的话，正确的做法是在<strong>节点侧</strong>打时间戳（或者收 NTP），
+        而不是在网关侧补发。
+      </div>
+    </div>
+
+    <h2 id="limits">八、已知限制</h2>
+
+    <ol>
+      <li>
+        <strong>app 分区只剩 13%。</strong>
+        <code>esp32_bridge.bin</code> 约 914 KB，factory 分区 1 MB，
+        剩 <code>0x20c10</code>。下一步加 SNTP + TLS 之前，
+        需要先把 <code>factory</code> 分区调大，否则会链接失败。
+      </li>
+      <li>
+        <strong>QoS 1 会重复。</strong>
+        服务端目前只统计「疑似重复」不删除。要做严格去重，得在帧里加序号字段——
+        那要改 CC2530 侧的协议，留到后面一起做。
+      </li>
+      <li>
+        <strong>ESP32 侧没有本地时间。</strong>
+        时间戳全部由服务端在收到时打，所以 MQTT 链路的时间精度取决于网络延迟（局域网内是毫秒级，够用）。
+      </li>
+      <li>
+        <strong>反方向还没接通。</strong>远控继电器需要 <code>GPIO17 → P0_2</code> 这条路，
+        并且要解决 CH340 TXD 与 ESP32 TX 的输出冲突，是第 5 步的事。
+      </li>
+    </ol>
+
+    <h2 id="lessons">九、这轮的收获</h2>
+
+    <ol>
+      <li>
+        <strong>设备枚举成功，不等于设备在工作。</strong>
+        COM 口只证明「USB 转串口芯片」活着。要证明主芯片活着，
+        得看它自己说过的话——ROM 的 <code>rst:0x1 (POWERON)</code> 是唯一铁证。
+      </li>
+      <li>
+        <strong>「别的软件能行」是排查里信息量最大的一句话。</strong>
+        它一刀切开「硬件坏了」和「流程不对」，比读十遍报错有用。
+      </li>
+      <li>
+        <strong>报错文案不等于错误原因。</strong>
+        <code>No serial data received</code> 有三种完全不同的成因：芯片没电、没进下载模式、
+        进了但被工具自己复位踢出来。只看文案会挨个试错，
+        写个探针脚本发一次 SYNC 包，5 秒钟就能排除掉前两种。
+      </li>
+      <li>
+        <strong>分阶段验收省下的时间远大于多花的工夫。</strong>
+        阶段 A 只测串口、阶段 B 才上网络。如果一开始就全写在一起，
+        出问题时「串口没数据」和「MQTT 连不上」的症状会互相掩盖。
+      </li>
+      <li>
+        <strong>统计行要按「故障类型」分列计数。</strong>
+        <code>坏帧</code> 和 <code>无效字节</code> 分开算，才能从「都是 0」
+        或者「只有一个是 0」里读出线路质量。
+      </li>
+    </ol>
+
+    <div class="callout success">
+      <div class="callout-icon">→</div>
+      <div class="callout-body">
+        <strong>下一步（第 5 步）</strong>：远控继电器。
+        要把串口改成真正的双向——上行数据、下行命令，共用一个 UART 就得考虑帧格式和冲突；
+        还要解决 CH340 TXD 与 ESP32 TX 顶在同一根线上的问题。
+      </div>
+    </div>
+
+    <div class="post-footer">
+      <a class="btn" href="week4-smoke-alarm.html">← 第 4 周：烟雾告警</a>
+      <a class="btn btn-primary" href="../code/esp32_bridge/">看这一层的源码 →</a>
+    </div>
+
+  </article>
+
+</main>
+
+<footer class="site-footer">
+  <div class="wrap-wide">
+    <span>ZigBee 无线环境监测系统 · 开发手记 · by qikai-lab</span>
+    <span>最近更新：2026-10-27</span>
+  </div>
+</footer>
+
+</body>
+</html>
