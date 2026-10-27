@@ -184,8 +184,9 @@ linux_gateway/
 │   ├── test_http.c     38 项 HTTP 断言（5 个接口的 JSON + Content-Length）
 │   └── test_chain.c    23 项端到端断言（假帧 → on_env → 加工 → 落库）
 └── tools/
-    ├── sim_node.py     模拟 CC2530 节点，无硬件也能测
-    └── build_page.py   web/index.html → http_page.h
+    ├── sim_node.py       模拟 CC2530 节点，无硬件也能测
+    ├── build_page.py     web/index.html → http_page.h
+    └── set_static_ip.sh  固定/还原 Ubuntu 的 IPv4（免得换热点就得重烧 ESP32）
 ```
 
 ---
@@ -460,6 +461,34 @@ gw_baseline_update(&ctx->base, med, ctx->alarm.state == ALARM_ST_ALARM);
 `gas / 基线` 永远够不到 2.5 倍 —— **烟越浓基线涨越快，形成自锁，永远不报警**。
 这是自适应基线的头号陷阱。告警期间还要 `freeze` 基线，从根上避免"真烟雾持续 10 分钟
 被当成新常态、告警自己消失"。
+
+---
+
+## 6.7 固定 Ubuntu 的 IP：换热点不用重烧 ESP32
+
+ESP32 固件里 broker 地址是写死的 IP（`app_cfg.h` 的 `APP_MQTT_URI`），
+Ubuntu 一换地址就要改代码重烧板子。`tools/set_static_ip.sh` 把地址钉死：
+
+```bash
+sudo bash tools/set_static_ip.sh --show    # 只看现状，什么都不改
+sudo bash tools/set_static_ip.sh           # 钉死成脚本顶部配置的地址
+sudo bash tools/set_static_ip.sh --dhcp    # 出问题退回自动获取
+```
+
+它会自动判断网卡由谁管（NetworkManager / netplan / ifupdown）并走对应分支，
+不用先确认系统版本。
+
+**⚠️ 边界：静态 IP 只对同一个网段有效。** 换到另一个手机热点后网段会变
+（`10.233.60.x` → `192.168.43.x`），这时静态地址连网关都不通，**比 DHCP 更糟**。
+所以脚本内置两道护栏：
+
+1. **设之前比对网段** —— 当前默认网关和配置区网关不在同一 `/24` 就直接拒绝执行，
+   一个字节都不改；
+2. **设之后 ping 网关三下** —— 通不过自动回滚成 DHCP。
+
+真要彻底摆脱「换热点就重烧」，正确方向是别在固件里写 IP，
+改成用 mDNS 解析 `ubuntu.local`（ESP32 侧加 `espressif/mdns`，
+Ubuntu 侧装 `avahi-daemon`）。脚本解决的是「同一热点下地址漂移」，不是这个。
 
 ---
 
