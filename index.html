@@ -81,7 +81,7 @@
       <a class="post-card" href="posts/week5-esp32-bridge.html">
         <div class="post-card-top">
           <span class="post-date">2026-10-27</span>
-          <span class="tag done">阶段 A 已通过</span>
+          <span class="tag done">阶段 A / B 已通过</span>
           <span class="tag">ESP-IDF</span>
           <span class="tag">UART</span>
           <span class="tag">MQTT</span>
@@ -89,10 +89,11 @@
         <h3>第 5 周：ESP32 上云，以及「COM 口在」不等于「板子活着」</h3>
         <p>
           协调器的串口信号并联一路喂给 ESP32-S3，走 WiFi + MQTT 上云。
-          三个坑全和代码无关：设备管理器里有 COM 口但主芯片根本没上电；
+          四个坑全和代码无关：设备管理器里有 COM 口但主芯片根本没上电；
           自动下载电路不通，esptool 默认的 <code>default_reset</code>
-          每次把手动进好的下载模式踢掉；新版 EIM 安装器让 <code>idf.py</code> 找不到工具链。
-          附 60 帧零坏帧的验收数据。
+          每次把手动进好的下载模式踢掉；新版 EIM 安装器让 <code>idf.py</code> 找不到工具链；
+          换热点后 Ubuntu 抱着旧 DHCP 租约不换 IP，表现为「broker 明明在跑却连不上」。
+          附 60 帧零坏帧（阶段 A）与 156 帧零解析失败（阶段 B）的双链路对账数据。
         </p>
       </a>
 
