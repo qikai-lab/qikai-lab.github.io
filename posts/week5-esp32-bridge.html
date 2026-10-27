@@ -9,7 +9,7 @@
 <meta property="og:type" content="article">
 <meta property="og:site_name" content="ZigBee 无线环境监测系统 · 开发手记">
 <meta property="og:url" content="https://qikai-lab.github.io/posts/week5-esp32-bridge.html">
-<meta name="description" content="用 ESP32-S3 把 ZigBee 协调器的串口数据转发到 MQTT。三个坑：设备管理器里有 COM 口但主芯片根本没上电、自动下载电路不通导致 esptool 自己把手动下载模式踢掉、新版 EIM 安装器让 idf.py 找不到工具链。附阶段 A 60 帧零坏帧的验收数据。">
+<meta name="description" content="用 ESP32-S3 把 ZigBee 协调器的串口数据转发到 MQTT。四个坑：设备管理器里有 COM 口但主芯片根本没上电、自动下载电路不通导致 esptool 自己把手动下载模式踢掉、新版 EIM 安装器让 idf.py 找不到工具链、换热点后 Ubuntu 抱着旧 DHCP 租约不换 IP。附阶段 A 60 帧零坏帧与阶段 B 156 帧零解析失败的双链路对账数据。">
 <link rel="stylesheet" href="../assets/css/style.css">
 </head>
 <body>
@@ -37,7 +37,7 @@
     <div class="post-meta">
       <span>2026-10-27</span>
       <span class="dot">·</span>
-      <span class="tag done">阶段 A 已通过</span>
+      <span class="tag done">阶段 A / B 已通过</span>
       <span class="tag">ESP-IDF</span>
       <span class="tag">UART</span>
       <span class="tag">MQTT</span>
@@ -54,8 +54,8 @@
     </p>
 
     <p>
-      功能本身不复杂，一天能写完。<strong>真正花掉时间的是三个和代码完全无关的坑</strong>——
-      而且每一个的第一个错误结论都是错的。这篇把这三个坑的排查过程完整写下来，
+      功能本身不复杂，一天能写完。<strong>真正花掉时间的是四个和代码完全无关的坑</strong>——
+      而且每一个的第一个错误结论都是错的。这篇把这四个坑的排查过程完整写下来，
       因为它们比功能代码本身有价值得多。
     </p>
 
@@ -63,7 +63,9 @@
       这一阶段的源码在
       <a href="../code/esp32_bridge/"><code>code/esp32_bridge/</code></a>，
       服务端的 MQTT 订阅程序在
-      <a href="../code/linux_gateway/"><code>code/linux_gateway/mqtt_sub.c</code></a>。
+      <a href="../code/linux_gateway/"><code>code/linux_gateway/mqtt_sub.c</code></a>，
+      固定 Ubuntu 地址的脚本在
+      <a href="../code/linux_gateway/tools/set_static_ip.sh"><code>set_static_ip.sh</code></a>。
     </p>
 
     <h2 id="why">一、为什么要在中间插一层 ESP32</h2>
@@ -528,14 +530,177 @@ CONFIG_ESPTOOLPY_BEFORE_NORESET=y</pre>
       </div>
     </div>
 
-    <h2 id="limits">八、已知限制</h2>
+    <h2 id="stageB-verify">八、阶段 B 验收：两条链路互相对账</h2>
+
+    <p>
+      「跑通了」和「可信」是两件事。真正能让人放心的，是<strong>两条链路能对上账</strong>：
+      同一帧数据同时走串口和 WiFi，分别落进 <code>env_data</code> 和 <code>env_data_mqtt</code>，
+      同一时刻的数值应当几乎相同。不一样就说明中间某一段坏了，
+      而且还能立刻判断是哪一段。
+    </p>
+
+    <p>
+      ESP32 侧跑 10 分钟，串口统计行是这样的：
+    </p>
+
+<pre><span class="c">I (142300) BRIDGE: ---- 5s: 字节=120 帧=5 坏帧=0 无效字节=0 | WiFi=通(10.233.60.204,-22dBm,断0次) MQTT=通 发布=5 丢弃=0 ----</span>
+<span class="c">I (202300) BRIDGE: ---- 5s: 字节=3096 帧=129 坏帧=2 无效字节=0 | WiFi=通(10.233.60.204,-31dBm,断1次) MQTT=通 发布=129 丢弃=13 ----</span></pre>
+
+    <p>
+      服务端订阅器同时记着：
+    </p>
+
+<pre><span class="c">[MQTT] 收到=156  入库=156  解析失败=0  疑似重复=32  无效字节=0</span>
+<span class="c">$ sqlite3 env_mqtt.db "select id,temp_x10,hum_x10,lux,gas from env_data_mqtt order by id desc limit 5;"</span>
+788|203|550|674|18
+787|203|550|674|18
+786|203|550|674|18
+785|203|550|674|18
+784|203|550|674|18</pre>
+
+    <p>
+      <code>temp_x10=203</code> 就是 20.3 °C，<code>hum_x10=550</code> 是 55.0 %——
+      和串口那一侧同口径，服务端不需要做任何浮点换算。四个计数各有明确含义，别混着看：
+    </p>
+
+<div class="table-wrap">
+  <table>
+    <thead>
+      <tr><th>计数</th><th>含义</th><th>这次的值</th><th>该怎么读</th></tr>
+    </thead>
+    <tbody>
+      <tr><td><code>收到</code></td><td>MQTT 主题上真的来了多少条</td><td>156</td><td>和 ESP32 的 <code>发布</code> 对得上</td></tr>
+      <tr><td><code>入库</code></td><td>成功写进 SQLite 多少条</td><td>156</td><td><strong>等于「收到」→ 没有写库失败</strong></td></tr>
+      <tr><td><code>解析失败</code></td><td>JSON 字段缺失/类型不对</td><td>0</td><td>两端字段名和口径一致</td></tr>
+      <tr><td><code>疑似重复</code></td><td>与上一条 (node, 各字段) 完全相同</td><td>32</td><td>见下，不是 MQTT 重发</td></tr>
+    </tbody>
+  </table>
+</div>
+
+    <p>
+      <code>疑似重复=32</code> 一开始最容易被当成 QoS 1 的锅，实际不是。
+      去翻原始日志就明白了：
+    </p>
+
+<pre><span class="c">I (68120) BRIDGE: [帧 #8] n1  20.1C  55.0%  lux= 674(65%)  gas=  18  PIR=无人  RLY=OFF</span>
+<span class="c">I (68120) BRIDGE: [帧 #9] n1  20.1C  55.0%  lux= 674(65%)  gas=  18  PIR=无人  RLY=OFF</span></pre>
+
+    <p>
+      <strong>同一个毫秒、同样的数值，是协调器自己连吐了两帧</strong>。
+      ZigBee 那边一次上报被拆成了两次串口输出，ESP32 只是如实转发。
+      这也说明「疑似重复」这个统计放在服务端是对的——它是链路的体检指标，
+      不是需要修的错误。
+    </p>
+
+    <p>
+      另一个看起来像故障、实际完全自洽的是 <code>丢弃=13</code>：
+      ESP32 从上电到 MQTT 连上花了 10718 ms，这段时间里协调器已经吐了 13 帧，
+      而 <code>mqtt_pub_env()</code> 在未连接时只计数不排队，所以正好丢 13 条。
+      <strong>10718 ms ÷ 800 ms/帧 ≈ 13</strong>，对得上。
+    </p>
+
+    <div class="callout info">
+      <div class="callout-icon">i</div>
+      <div class="callout-body">
+        <strong>长跑数据。</strong>15 分钟后 <code>env_data_mqtt</code> 从 97 条涨到 803 条，
+        零丢弃、零解析失败。同时用裸 socket 直接问 broker：
+        <code>$SYS/broker/publish/messages/received = 97</code>、<code>clients/connected = 3</code>，
+        说明设备真的在发、订阅端真的在收，不是本地伪造的假数据。
+      </div>
+    </div>
+
+    <h2 id="trap4">九、坑四：换了热点，Ubuntu 不会自己换 IP</h2>
+
+    <p>
+      这一坑的现场表现极具欺骗性：<strong>ESP32 连不上 broker，Ubuntu 上
+      <code>mosquitto</code> 明明在跑、端口明明在听，网络看起来完全正常</strong>。
+    </p>
+
+    <p>
+      起因是把 WiFi 从「<code>403</code>」换成手机热点「<code>ling</code>」。
+      Ubuntu 是 VMware 桥接，跟着宿主机走，换网之后它应该拿到新网段的地址——
+      但它没有。<code>ip addr</code> 里还是旧网段的 <code>192.168.110.115</code>。
+    </p>
+
+    <p>
+      原因是 <strong>DHCP 租约没到期</strong>：<code>dhclient</code> 手里那张租约还在有效期内，
+      网卡重新起来时它<strong>直接续用旧地址，根本不会再发一次 DISCOVER</strong>。
+      所以「换网之后扫不到 Ubuntu」多半不是桥接坏了，而是它压根没去要新地址。
+    </p>
+
+<pre><span class="c"># 强制重新走一遍 DHCP</span>
+sudo dhclient -r &amp;&amp; sudo dhclient
+ip -4 addr show          <span class="c"># 这时才变成 10.233.60.172/24</span></pre>
+
+    <p>
+      顺手记一个更阴的坑：旧网络里<strong>路由器自己就带了个 mosquitto</strong>（版本 1.5.9，
+      同样开着 1883 且允许匿名）。如果 <code>app_cfg.h</code> 里填成路由器地址，
+      数据会被它<strong>默默收下</strong>——ESP32 日志显示「发布成功」，Ubuntu 那边一条都收不到。
+      判断方法是裸 socket 手搓一个 SUBSCRIBE 去问 <code>$SYS/broker/version</code>：
+      Ubuntu 的 16.04 自带版是 <strong>1.4.8</strong>，路由器的是 <strong>1.5.9</strong>，一问就分得清。
+    </p>
+
+    <h3>那能不能干脆把 IP 钉死？能，但只对「同一个热点」有效</h3>
+
+    <p>
+      既然换一次热点就得改固件重烧，最直觉的做法是把 Ubuntu 设成静态 IP，
+      让 <code>app_cfg.h</code> 里的地址永不过期。这个做法有效，但<strong>边界必须说清</strong>：
+    </p>
+
+<div class="table-wrap">
+  <table>
+    <thead>
+      <tr><th>场景</th><th>Ubuntu 静态 IP 的表现</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>还是 <code>ling</code> 这个热点，只是手机重启过</td><td><strong>有效</strong>，地址不会被 DHCP 分给别人</td></tr>
+      <tr><td>换到另一个热点（网段变了）</td><td><strong>更糟</strong>：静态地址不在新网段，连网关都不通，比 DHCP 还难救</td></tr>
+    </tbody>
+  </table>
+</div>
+
+    <p>
+      所以脚本里加了一道<strong>网段校验</strong>：设之前先比对「当前默认网关」和
+      「配置区网关」是否同一 <code>/24</code>，不同就直接拒绝执行、不做任何修改。
+      换过热点的人跑它会看到一条明确的提示，而不是稀里糊涂把网络配死。
+      配完还会 ping 三下网关，<strong>通不过就自动回滚成 DHCP</strong>。
+    </p>
+
+<pre><span class="c"># 只看现状（安全，什么都不改）</span>
+sudo bash set_static_ip.sh --show
+
+<span class="c"># 钉死成 10.233.60.172</span>
+sudo bash set_static_ip.sh
+
+<span class="c"># 出问题时退回自动获取</span>
+sudo bash set_static_ip.sh --dhcp</pre>
+
+    <div class="callout warn">
+      <div class="callout-icon">!</div>
+      <div class="callout-body">
+        <strong>静态 IP 只是止血，不是根治。</strong>
+        它把「同一个热点下地址漂移」这一种情况解决了，但「换热点」本身没解决——
+        换网段之后该重烧还是得重烧。真正的解法是<strong>别在固件里写 IP</strong>：
+        让 ESP32 通过 mDNS 解析 <code>ubuntu.local</code>，
+        地址由 Ubuntu 广播，换任何局域网都能找到。这是下一步要做的。
+      </div>
+    </div>
+
+    <h2 id="limits">十、已知限制</h2>
 
     <ol>
       <li>
         <strong>app 分区只剩 13%。</strong>
         <code>esp32_bridge.bin</code> 约 914 KB，factory 分区 1 MB，
-        剩 <code>0x20c10</code>。下一步加 SNTP + TLS 之前，
+        剩 <code>0x208e0</code>。下一步加 SNTP + TLS 之前，
         需要先把 <code>factory</code> 分区调大，否则会链接失败。
+      </li>
+      <li>
+        <strong>没有 CRC，意味着约 3% 的帧会被整帧丢掉。</strong>
+        协议里只有帧头和字段范围校验，24 个字节里任何一个被打歪，
+        整帧就得丢弃并计入「无效字节」。实测 99 帧里坏 3 帧、129 帧里坏 2 帧，
+        都是这个量级。<strong>这是当初省掉 CRC 的设计代价，不是 bug</strong>——
+        要根治得改两端协议，属第 5 步一起做的事。
       </li>
       <li>
         <strong>QoS 1 会重复。</strong>
@@ -552,7 +717,7 @@ CONFIG_ESPTOOLPY_BEFORE_NORESET=y</pre>
       </li>
     </ol>
 
-    <h2 id="lessons">九、这轮的收获</h2>
+    <h2 id="lessons">十一、这轮的收获</h2>
 
     <ol>
       <li>
@@ -579,6 +744,14 @@ CONFIG_ESPTOOLPY_BEFORE_NORESET=y</pre>
         <strong>统计行要按「故障类型」分列计数。</strong>
         <code>坏帧</code> 和 <code>无效字节</code> 分开算，才能从「都是 0」
         或者「只有一个是 0」里读出线路质量。
+      </li>
+      <li>
+        <strong>红色的 ERROR 不一定是要修的错误，但一定得处理。</strong>
+        MQTT 客户端启动时 WiFi 还没拿到 IP，必然刷一条
+        <code>E esp-tls: Host is unreachable</code>，5 秒后自己就重连上了。
+        它对功能无害，<strong>却会把真正该看的红字埋掉</strong>——
+        现场排障最怕的不是报错，而是报错里一半是噪音。
+        按下「等 WiFi 就绪再启 MQTT」这个顺序改完之后，这条红字再也没出现过。
       </li>
     </ol>
 
