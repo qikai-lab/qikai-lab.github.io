@@ -67,4 +67,11 @@
 /* 统计打印周期 */
 #define APP_STAT_PERIOD_MS  5000
 
+/* 启动时等 WiFi 拿到 IP 的最长时间（毫秒）。
+ * 为什么要等：MQTT 客户端一起来就会立刻去连 broker，此时 IP 栈还没就绪，
+ * DNS/connect 必然失败，日志里会刷一条红色的 "Host is unreachable"。
+ * 它不是故障（5 秒后自己就重连好了），但红字会把真正的问题埋掉，
+ * 所以先等 WiFi。超时也照样启动 MQTT（让它自己一直重试），不阻塞采集。 */
+#define APP_WIFI_WAIT_MS    15000
+
 #endif /* APP_CFG_H */
