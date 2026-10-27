@@ -62,7 +62,8 @@
       <div class="callout-body">
         <strong>电池供电的 CC2530 无线节点</strong>采集温湿度、烟雾、光照与人体感应，
         经 ZigBee <strong>协调器</strong>汇聚后从串口送进 <strong>Ubuntu 上的 C 网关</strong>：
-        落库、出历史曲线、判定烟雾告警。下一阶段再接 <strong>ESP32 网关</strong>转 MQTT 上云，
+        落库、出历史曲线、判定烟雾告警。另一路信号并联进 <strong>ESP32 网关</strong>转 MQTT 上云
+        （串口透传已验收，MQTT 部分已就绪待实测），
         最终支持从<strong>网页远程控制继电器</strong>。
       </div>
     </div>
@@ -234,7 +235,7 @@
             <td>
               <span class="tag done">选中</span>
               覆盖「节点 → 组网 → 网关 → 服务端 → 前端」全链路，
-              硬件已具备，缺的只有 ESP32 和电池盒。
+              硬件已全部备齐（含 ESP32-S3 与电池盒）。
             </td>
           </tr>
         </tbody>
@@ -295,7 +296,7 @@
             <td>4</td>
             <td>ESP32 独立 WiFi 上云</td>
             <td>1~2 周</td>
-            <td>整机通电即工作，不依赖电脑</td>
+            <td><span class="tag warn">部分完成</span> 串口透传已验收（51 帧零坏帧），WiFi + MQTT 已就绪待实测</td>
           </tr>
           <tr>
             <td>5</td>
