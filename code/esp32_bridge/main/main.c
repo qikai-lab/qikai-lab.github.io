@@ -160,6 +160,44 @@ static void rx_task(void *arg)
     }
 }
 
+/* 等 WiFi 拿到 IP，再启动 MQTT。
+ *
+ * 不等的话：MQTT 客户端一 init 就立刻去 connect broker，这时候 IP 栈还没就绪，
+ * DNS/getaddrinfo 必然失败，串口刷一条红色
+ *   E esp-tls: Host is unreachable
+ * 它其实不是故障 —— 5 秒后自己就重连上了。但红字会把真正的问题（线没接、
+ * broker 没开）埋掉，现场排障时很容易被它带偏。
+ *
+ * 超时了也照样启动 MQTT：让它自己一直重试，比干脆不启动好。
+ * 这时要明确告诉看日志的人「现在的网络错误是 WiFi 没通的连带结果」。 */
+static void start_mqtt_after_wifi(void)
+{
+    const int step_ms = 1000;
+    int       waited  = 0;
+
+    while (!wifi_mgr_is_connected() && waited < APP_WIFI_WAIT_MS) {
+        if ((waited % 3000) == 0) {
+            ESP_LOGI(TAG, "等待 WiFi 就绪 ... %d 秒（最多等 %d 秒）",
+                     waited / 1000, APP_WIFI_WAIT_MS / 1000);
+        }
+        vTaskDelay(pdMS_TO_TICKS(step_ms));
+        waited += step_ms;
+    }
+
+    if (wifi_mgr_is_connected()) {
+        ESP_LOGI(TAG, "WiFi 就绪（%s），启动 MQTT", wifi_mgr_ip());
+    } else {
+        ESP_LOGW(TAG, "等了 %d 秒 WiFi 仍没拿到 IP，仍启动 MQTT 让它自己重试",
+                 APP_WIFI_WAIT_MS / 1000);
+        ESP_LOGW(TAG, "  注意：接下来若报 TCP/DNS 错误，是「WiFi 没通」的连带结果，"
+                      "先查 SSID/密码/2.4GHz，别去查 broker");
+    }
+
+    if (mqtt_pub_start() != 0) {
+        ESP_LOGE(TAG, "MQTT 启动失败 —— 串口采集继续，但数据无法上云");
+    }
+}
+
 /* ------------------------------ 入口 ------------------------------ */
 void app_main(void)
 {
@@ -185,7 +223,7 @@ void app_main(void)
     if (wifi_mgr_start() != 0) {
         ESP_LOGE(TAG, "WiFi 启动失败 —— 串口采集继续，但数据无法上云");
     }
-    if (mqtt_pub_start() != 0) {
-        ESP_LOGE(TAG, "MQTT 启动失败 —— 串口采集继续，但数据无法上云");
-    }
+
+    /* 先等 WiFi 拿到 IP，再启 MQTT（理由见函数注释） */
+    start_mqtt_after_wifi();
 }
