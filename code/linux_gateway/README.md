@@ -172,6 +172,7 @@ linux_gateway/
 ├── gw_latest.c/.h      进程内最新值快照（网页实时数据源，0 延迟）
 ├── http_srv.c/.h       内置 HTTP 服务（GET only / Connection: close）
 ├── http_page.h         网页 HTML 的 C 数组（自动生成，不要手改）
+├── mqtt_sub.c          独立进程：订阅 zigbee/nodeN/env → 落 env_data_mqtt（第 4 步）
 ├── web/
 │   ├── index.html      网页源码（改这个，再跑 tools/build_page.py）
 │   └── preview_m4.html 离线预览版（内置假数据，没网关也能看 UI）
@@ -211,6 +212,35 @@ make                 # 编出 ./gw
 | `-n` | 多少条提交一次事务 | `20` |
 | `-p` | HTTP 端口，**填 0 关闭网页** | `8080` |
 | `-q` | 安静模式，不打印每帧 | 关 |
+
+### MQTT 订阅（第 4 步，独立进程）
+
+```bash
+sudo apt install libmosquitto-dev mosquitto mosquitto-clients
+
+make mqtt_sub                        # 编出 ./mqtt_sub
+./mqtt_sub -h 127.0.0.1 -p 1883 -f ./gw.db
+```
+
+`mqtt_sub` 和 `gw` 是两个独立进程，**共用一个 `gw.db`**（SQLite WAL 允许多进程读写）：
+
+| 进程 | 数据来源 | 写入的表 |
+| --- | --- | --- |
+| `gw` | 串口（CC2530 协调器直连） | `env_data`、`alarm_event` |
+| `mqtt_sub` | MQTT（ESP32 网关上云） | `env_data_mqtt` |
+
+两张表结构一致但互不干扰，**同一时刻的数值应当几乎相同**——
+不一致就说明中间某一段坏了，而且能立刻判断是哪条链路的问题。
+
+订阅主题 `zigbee/node1/env`，消息体是一个扁平 JSON：
+
+```json
+{"node":1,"temp":194,"hum":590,"lux":551,"gas":39,"pir":0,"relay":0}
+```
+
+`temp` / `hum` 是 **×10 定点整数**（194 = 19.4°C），与数据库里 `temp_x10` / `hum_x10`
+的存储口径完全一致，避免在服务端做浮点。字段越界（`lux`/`gas` > 1023、
+`pir`/`relay` 不在 0/1、`node` = 0）整条丢弃。
 
 输出示例：
 
@@ -599,6 +629,7 @@ MQ-2 的 ADC 值受温度、湿度、加热丝老化、器件个体差异四重�
 | M5-2b | 串口不在时不再退出（启动失败也进主循环重试，网页照常能开） | ✅ |
 | M5-3 | 掉线续传（MQTT 上云后本地断网时缓存，恢复后补发） | ⬜ |
 | M5-4 | 低功耗（节点端，改固件） | ⬜ |
+| M6 | MQTT 订阅入库（`mqtt_sub` → 新表 `env_data_mqtt`，与串口链路交叉验证） | 🟡 代码就绪，待 Ubuntu 实测 |
 
 **为什么远控放最后**：它要同时改 CC2530 固件（加命令帧解析 + 上报继电器实际状态）
 和 Linux 端（HTTP POST 或 GET 下发 + 串口写），
