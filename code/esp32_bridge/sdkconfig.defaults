@@ -1,0 +1,29 @@
+# 首次 `idf.py build` 时会自动把这里的值合并进 sdkconfig
+# ===========================================================================
+
+# 芯片：ESP32-S3（模组 ESP32-S3-WROOM-1 N16R8）
+CONFIG_IDF_TARGET="esp32s3"
+
+# 这颗模组是 16MB Flash。不设成 16MB 也能跑，但分区表会和实际芯片不匹配
+CONFIG_ESPTOOLPY_FLASHSIZE_16MB=y
+CONFIG_ESPTOOLPY_FLASHSIZE="16MB"
+
+# 日志用信息级别就够了（这一版全部输出都走 ESP_LOGI / ESP_LOGW）
+CONFIG_LOG_DEFAULT_LEVEL_INFO=y
+
+# 1kHz 节拍，uart_read_bytes 的 100ms 超时更准
+CONFIG_FREERTOS_HZ=1000
+
+# 主任务栈给足，解析器里有 memmove
+CONFIG_ESP_MAIN_TASK_STACK_SIZE=4096
+
+# ===========================================================================
+# 烧录前不要自动复位板子
+# ===========================================================================
+# 这块板子的 CH343 DTR/RTS 没法把 EN 拉进 bootloader（自动下载电路不通），
+# 只能手动「按住 BOOT → 点一下 RST → 松开 BOOT」进下载模式。
+# 而 esptool 默认的 default_reset 会在连接前复位一次板子 ——
+# 那一下正好把刚手动进好的下载模式踢出去，于是永远报
+#   Failed to connect to ESP32-S3: No serial data received
+# 改成 no_reset 后 esptool 完全不碰复位线，保持你手动进入的下载模式。
+CONFIG_ESPTOOLPY_BEFORE_NORESET=y
