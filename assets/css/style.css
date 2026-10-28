@@ -522,12 +522,19 @@ figure {
   text-align: center;
 }
 
-figure img {
+figure img,
+figure video {
   max-width: 100%;
   height: auto;
   border-radius: var(--radius);
   border: 1px solid var(--border);
   background: #fff;
+}
+
+/* 竖屏视频（手机拍的）宽度别吃满，否则一张图占一屏 */
+figure video.portrait {
+  max-width: 340px;
+  width: 100%;
 }
 
 figcaption {

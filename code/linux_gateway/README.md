@@ -4,10 +4,11 @@
 
 跑在 Ubuntu 上，全 C（POSIX + SQLite），是"嵌入式 Linux 应用开发"岗位的主力项目。
 
-当前进度：**M5**（M4 全部保留，新增 systemd 托管：开机自启 / 崩溃重启 / journald）。
-M5-2b 修了一个真问题：**串口不在时进程不再退出**，而是留在主循环每秒重试，
-网页照常能开——以前会 `return 1`，配合 `Restart=always` 变成每 3 秒一次的重启风暴。
-远控继电器、掉线续传、低功耗待做。
+当前进度：**M5-1**（M4 全部保留，新增网页远程控制继电器：按钮 → `/api/cmd` → MQTT → ESP32 → 协调器 → 终端）。
+M5-1 里踩到一个真问题：协调器原来用 ZigBee **广播**下发命令，广播在 MAC 层不回 ACK、
+丢了不会重发，实测 20 次命令只成 5 次（25%）；改成单播 + `AF_ACK_REQUEST` +
+隔 200ms 补发 5 次后解决。
+低功耗（节点端）待做；掉线续传决定不做，原因见第 10 节。
 
 ---
 
@@ -66,8 +67,8 @@ M5-2b 修了一个真问题：**串口不在时进程不再退出**，而是留�
 | **烟雾告警状态机** | ✅ M4 | 正常/疑似/告警 三档 + 双阈值迟滞 + 连续帧确认 |
 | **告警事件落库** | ✅ M4 | 独立 `alarm` 表，一次告警一行，`/api/alarms` 可查历史 |
 | **网页告警展示** | ✅ M4 | 红色横幅（告警中闪烁）+ 倍数/基线 + 最近 10 次记录 |
-| 离线单元测试 | ✅ | 178 项断言（解析 50 + 历史/告警表 31 + 滤波 36 + HTTP 38 + 串联 23），不需要硬件 |
-| 远控继电器 | ⬜ M5 | 需要给 CC2530 加下行命令字，属跨两端改动 |
+| 离线单元测试 | ✅ | 198 项断言（解析 50 + 历史/告警表 31 + 滤波 36 + HTTP 38 + 串联 23 + MQTT 报文 20），不需要硬件 |
+| **远控继电器** | ✅ M5-1 | 网页按钮 → `/api/cmd` → 裸 socket 发 MQTT → ESP32 → 串口 → 协调器单播重发 → 终端执行 |
 | systemd 托管 | ✅ | `install_service.sh` 一键装；`Restart=always` + 开机自启 + journald |
 
 ---
@@ -171,6 +172,7 @@ linux_gateway/
 ├── gw_db.c/.h          SQLite 落库（WAL / 批量 / 预处理）+ 历史查询 + 告警事件表
 ├── gw_latest.c/.h      进程内最新值快照（网页实时数据源，0 延迟）
 ├── http_srv.c/.h       内置 HTTP 服务（GET only / Connection: close）
+├── gw_cmd.c/.h         第 5 步：手写 MQTT CONNECT/PUBLISH，把继电器命令发给 broker
 ├── http_page.h         网页 HTML 的 C 数组（自动生成，不要手改）
 ├── mqtt_sub.c          独立进程：订阅 zigbee/nodeN/env → 落 env_data_mqtt（第 4 步）
 ├── web/
@@ -182,11 +184,11 @@ linux_gateway/
 │   ├── test_recent.c   31 项历史查询 + 告警表断言（倒序 / 过滤 / 上限 / 重启清理）
 │   ├── test_filter.c   36 项滤波 + 状态机断言（尖峰 / 死区 / 迟滞 / 冻结）
 │   ├── test_http.c     38 项 HTTP 断言（5 个接口的 JSON + Content-Length）
-│   └── test_chain.c    23 项端到端断言（假帧 → on_env → 加工 → 落库）
+│   ├── test_chain.c    23 项端到端断言（假帧 → on_env → 加工 → 落库）
+│   └── test_cmd.c      20 项 MQTT 报文断言（逐字节对照标准，不需要 broker）
 └── tools/
-    ├── sim_node.py       模拟 CC2530 节点，无硬件也能测
-    ├── build_page.py     web/index.html → http_page.h
-    └── set_static_ip.sh  固定/还原 Ubuntu 的 IPv4（免得换热点就得重烧 ESP32）
+    ├── sim_node.py     模拟 CC2530 节点，无硬件也能测
+    └── build_page.py   web/index.html → http_page.h
 ```
 
 ---
@@ -311,11 +313,12 @@ sqlite3 gw.db "ATTACH 'env_mqtt.db' AS m;
 
 | 路径 | 返回 |
 |---|---|
-| `GET /` | 网页（11.7KB，内嵌在二进制里） |
+| `GET /` | 网页（14.7KB，内嵌在二进制里） |
 | `GET /api/latest` | 最新一帧 + 加工结果 + 告警状态，**读内存快照，0 延迟** |
 | `GET /api/history?limit=60&node=0` | 最近 N 条，时间正序，`node=0` 表示不限 |
 | `GET /api/stats` | 帧数 / 坏帧 / 入库 / 库行数 / 告警次数 / uptime |
 | `GET /api/alarms?limit=20` | 最近 N 次告警，**时间倒序**（最新在上） |
+| `GET /api/cmd?v=1` | **第 5 步**：v=1 吸合、v=0 断开，立即返回不等结果（原因见 6.7） |
 
 ```bash
 curl http://localhost:8080/api/latest
@@ -464,31 +467,65 @@ gw_baseline_update(&ctx->base, med, ctx->alarm.state == ALARM_ST_ALARM);
 
 ---
 
-## 6.7 固定 Ubuntu 的 IP：换热点不用重烧 ESP32
+## 6.7 第 5 步：网页远程控制（M5-1）
 
-ESP32 固件里 broker 地址是写死的 IP（`app_cfg.h` 的 `APP_MQTT_URI`），
-Ubuntu 一换地址就要改代码重烧板子。`tools/set_static_ip.sh` 把地址钉死：
+网页上两个按钮，按下后一道命令要穿过五段链路：
 
-```bash
-sudo bash tools/set_static_ip.sh --show    # 只看现状，什么都不改
-sudo bash tools/set_static_ip.sh           # 钉死成脚本顶部配置的地址
-sudo bash tools/set_static_ip.sh --dhcp    # 出问题退回自动获取
+```
+浏览器  GET /api/cmd?v=1
+  └─ gw（本机）          gw_cmd.c 用裸 socket 连 127.0.0.1:1883
+       └─ mosquitto      PUBLISH 到 zigbee/node1/cmd，payload 是单字符 "1"
+            └─ ESP32     订阅者；收到 "1" 转成字节 0x41，从 UART1 写出去
+                 └─ 协调器  P0_5 收到字节 → 单播给终端，隔 200ms 重发共 5 次
+                      └─ 终端  relay_set(1) → P1_3 拉高 → 继电器吸合
 ```
 
-它会自动判断网卡由谁管（NetworkManager / netplan / ifupdown）并走对应分支，
-不用先确认系统版本。
+任一段断了，现象都是"继电器不动"。所以每一段都留了独立的观察点：
 
-**⚠️ 边界：静态 IP 只对同一个网段有效。** 换到另一个手机热点后网段会变
-（`10.233.60.x` → `192.168.43.x`），这时静态地址连网关都不通，**比 DHCP 更糟**。
-所以脚本内置两道护栏：
+| 段 | 怎么确认它通了 |
+|---|---|
+| gw → broker | `/api/cmd` 返回 `{"ok":1,...}`；失败会直接返回中文原因 |
+| broker → ESP32 | ESP32 串口打 `[收到命令] payload='1'` |
+| ESP32 → 协调器 | 协调器 **LED1 快闪 3 下**（常亮约 0.4 秒 = 还在广播，不是单播） |
+| 协调器 → 终端 | 终端屏幕上的继电器图标 + 下一帧上报的 `RLY=ON` |
+| 终端 → 继电器 | 继电器"咔"一声（这个最直接，声音是即时的） |
 
-1. **设之前比对网段** —— 当前默认网关和配置区网关不在同一 `/24` 就直接拒绝执行，
-   一个字节都不改；
-2. **设之后 ping 网关三下** —— 通不过自动回滚成 DHCP。
+### 三个刻意的取舍
 
-真要彻底摆脱「换热点就重烧」，正确方向是别在固件里写 IP，
-改成用 mDNS 解析 `ubuntu.local`（ESP32 侧加 `espressif/mdns`，
-Ubuntu 侧装 `avahi-daemon`）。脚本解决的是「同一热点下地址漂移」，不是这个。
+**① 自己拼 MQTT 报文，不用 libmosquitto。**
+只需要 CONNECT → CONNACK → PUBLISH → DISCONNECT 四步，QoS0，一共 40 多个字节。
+引库要多装 `libmosquitto-dev`，还要处理它的回调线程；而网关是单线程 epoll 主循环，
+阻塞行为必须自己可控。拼包是纯函数（`gw_cmd_build_*`），
+`tests/test_cmd.c` 里对着标准字节串逐位断言，不需要 broker 就能验。
+
+**② 用 GET 不用 POST（这是取舍，不是疏忽）。**
+本网关的 HTTP 解析刻意只读请求头（读到 `\r\n\r\n` 就停），不为一个按钮去实现
+`Content-Length` 读取循环。代价是"GET 改状态"不符合 REST 惯例，
+浏览器预取 / 地址栏敲一下都可能触发。因此加了两道限制：
+参数必须显式给 `v=1` 或 `v=0`（缺省直接拒绝，不猜），且只在内网使用。
+真要上公网，第一件事就是改 POST + CSRF token。
+
+**③ 立即返回，不等命令落地。**
+命令过三段最长约 1 秒，HTTP 阻塞等会让按钮一直转圈。
+而页面本来就每 2 秒轮询 `/api/latest`，继电器那一格下一轮自己就变了。
+所以接口返回的 `ok` 只代表"命令已交给 ESP32"，**真正的结果看网页上「继电器」那一格**。
+按钮文案里写的就是这句，避免看到"已发"而继电器没动时误判成成功。
+
+### 参数
+
+默认连 `127.0.0.1:1883`，主题 `zigbee/node1/cmd`。三个都能用环境变量覆盖，
+换 broker 地址不用重新编译：
+
+```bash
+GW_MQTT_HOST=10.236.232.172 GW_MQTT_PORT=1883 \
+GW_CMD_TOPIC=zigbee/node1/cmd ./gw -d /dev/ttyUSB0 -p 8080
+```
+
+systemd 托管时加在 unit 里：
+
+```ini
+Environment=GW_MQTT_HOST=127.0.0.1
+```
 
 ---
 
@@ -685,14 +722,17 @@ MQ-2 的 ADC 值受温度、湿度、加热丝老化、器件个体差异四重�
 | M2 | SQLite 落库（WAL / 批量 / 预处理） | ✅ |
 | M3 | 内置 HTTP + 内存快照 + 网页曲线 | ✅ |
 | M4 | 中值滤波 + 自适应基线 + 告警状态机 + 告警表 + 网页展示 | ✅ |
-| M5-1 | 网页下发继电器远控（要给 CC2530 加下行命令字，跨两端改动） | ⬜ |
+| M5-1 | 网页下发继电器远控（网页按钮 → `/api/cmd` → MQTT → ESP32 → 协调器 → 终端） | ✅ 代码完成，待整链实测 |
 | M5-2 | systemd 托管（`Restart=always` + 开机自启 + journald） | ✅ |
 | M5-2b | 串口不在时不再退出（启动失败也进主循环重试，网页照常能开） | ✅ |
-| M5-3 | 掉线续传（MQTT 上云后本地断网时缓存，恢复后补发） | ⬜ |
+| M5-3 | 掉线续传（MQTT 上云后本地断网时缓存，恢复后补发） | ❌ 决定不做 |
 | M5-4 | 低功耗（节点端，改固件） | ⬜ |
 | M6 | MQTT 订阅入库（`mqtt_sub` → 新表 `env_data_mqtt`，与串口链路交叉验证） | 🟡 代码就绪，待 Ubuntu 实测 |
 
 **为什么远控放最后**：它要同时改 CC2530 固件（加命令帧解析 + 上报继电器实际状态）
-和 Linux 端（HTTP POST 或 GET 下发 + 串口写），
-任何一边没对都会「点了没反应」，排查成本是单侧改动的两倍。
-先把单侧能做完的做实，再动跨两端的。
+和 Linux 端（HTTP 下发 + MQTT 写），任何一边没对都会「点了没反应」，
+排查成本是单侧改动的两倍。先把单侧能做完的做实，再动跨两端的。
+
+**M5-3 为什么不做了**：缓存补发会让几百条历史数据的时间戳挤在同一秒，
+在曲线上表现为一个**假台阶** —— 看上去像"烟雾浓度瞬间暴涨"，
+比丢数据更容易误导人。这条链路上丢几秒数据和造一个假象，后者更糟。

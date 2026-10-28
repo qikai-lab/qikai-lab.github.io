@@ -41,10 +41,10 @@
       <h1>从一块 <em>CC2530</em> 开始，<br>做一个能写进简历的物联网项目</h1>
       <p>
         电池供电的传感器节点采集温湿度、烟雾、光照与人体感应，经 ZigBee 协调器汇聚，
-        串口送进 Ubuntu 上的 C 网关：落库、出曲线、判定烟雾告警；
+        串口送进 Ubuntu 上的 C 网关：落库、出曲线、判定烟雾告警、网页远程控制继电器；
         另一路经 ESP32-S3 转成 MQTT 上云，两条链路并行、互为交叉验证。
         这里记录了从零到跑通的每一步，包括所有踩过的坑。
-        服务端源码在 <a href="code/linux_gateway/">code/linux_gateway/</a>（178 项离线断言，
+        服务端源码在 <a href="code/linux_gateway/">code/linux_gateway/</a>（198 项离线断言，
         无需任何硬件即可复现），网关固件在 <a href="code/esp32_bridge/">code/esp32_bridge/</a>。
       </p>
 
@@ -62,7 +62,7 @@
           <div class="stat-label">板载外设</div>
         </div>
         <div class="stat">
-          <div class="stat-num">178</div>
+          <div class="stat-num">198</div>
           <div class="stat-label">离线测试断言</div>
         </div>
       </div>
@@ -77,6 +77,24 @@
     </div>
 
     <div class="post-list">
+
+      <a class="post-card" href="posts/week6-relay-remote.html">
+        <div class="post-card-top">
+          <span class="post-date">2026-10-28</span>
+          <span class="tag done">第 5 步已通过</span>
+          <span class="tag">ZigBee 下行</span>
+          <span class="tag">CC2530</span>
+          <span class="tag">MQTT 手写报文</span>
+        </div>
+        <h3>第 6 周：网页点一下，继电器就响——中间隔了三次翻车</h3>
+        <p>
+          从网页按钮到继电器吸合，中间隔着 MQTT、ESP32、协调器、ZigBee 五段。
+          第一版用广播发命令，20 次只成 5 次；第二版为了补丢包连发 5 次，
+          命中率上去了却把休眠终端挤出网络（屏幕定格、数据不刷新）。
+          真正的解是「单播 + 只补发 1 次 + 间隔对齐 POLL_RATE + 关掉 APS 确认」，
+          实测 8 次命令 8 次命中、50 帧无断档。附两段演示视频与「延迟 1~2.6 秒」的诚实说明。
+        </p>
+      </a>
 
       <a class="post-card" href="posts/week5-esp32-bridge.html">
         <div class="post-card-top">

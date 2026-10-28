@@ -46,6 +46,21 @@ section.chart h2 em{font-style:normal}
 canvas{display:block;width:100%;height:110px}
 .leg{display:inline-flex;align-items:center;gap:4px}
 .leg:before{content:"";width:10px;height:2px;background:currentColor}
+/* 远程控制区（第 5 步）。放在数据下面、曲线上面：
+   看数据是"看",按按钮是"做"，从上到下正好是「看 → 做 → 看趋势」 */
+section.ctl{margin-top:8px;background:#151c24;border:1px solid #212b36;border-radius:8px;padding:10px 12px}
+section.ctl h2{font-size:12px;font-weight:500;color:#8b949e;display:flex;align-items:baseline;gap:8px}
+section.ctl h2 em{font-style:normal;font-size:11px;margin-left:auto;color:#484f58}
+section.ctl h2 em.okmsg{color:#3fb950}
+section.ctl h2 em.errmsg{color:#f85149}
+.btns{display:flex;gap:8px;margin-top:9px}
+.btns button{flex:1;padding:10px 0;border-radius:6px;border:1px solid #2b3540;
+  background:#1c2530;color:#e6edf3;font:600 14px/1 inherit;cursor:pointer;
+  transition:background .15s,border-color .15s}
+.btns button:hover:not(:disabled){background:#243040}
+.btns button:disabled{opacity:.4;cursor:not-allowed}
+.btns .b-on{border-color:#2ea043;color:#56d364}
+.btns .b-off{border-color:#6e7681;color:#adbac7}
 footer{margin-top:14px;font-size:11px;color:#484f58;text-align:center}
 @media(max-width:560px){.cards{grid-template-columns:repeat(2,1fr)}}
 </style>
@@ -79,6 +94,14 @@ footer{margin-top:14px;font-size:11px;color:#484f58;text-align:center}
   <div class="flag"><span>当前倍数</span><span id="ratio">--</span></div>
   <div class="flag"><span>已收帧</span><span id="frames">--</span></div>
 </div>
+
+<section class="ctl">
+  <h2>远程控制 <em id="ctlmsg"></em></h2>
+  <div class="btns">
+    <button type="button" class="b-on"  id="bon">吸合继电器</button>
+    <button type="button" class="b-off" id="boff">断开继电器</button>
+  </div>
+</section>
 
 <section class="chart">
   <h2><span class="leg" style="color:#ff7b72">温度 °C</span><span class="leg" style="color:#58a6ff">湿度 %</span></h2>
@@ -277,6 +300,47 @@ function poll() {
 }
 
 window.addEventListener('resize', function () { renderCharts(last); });
+
+/* ---- 远程控制（第 5 步）----
+   点完立刻把按钮禁用，但**不在前端等命令落地**：一条命令要走
+   MQTT → 串口 → ZigBee 三段，最长约 1 秒；在这里阻塞等会让按钮
+   一直转圈。而页面本来就每 2 秒轮询一次 /api/latest，
+   上面那个「继电器」格子下一轮自己就变成 ON/OFF 了。
+   所以这里的成功提示只说明「命令交给网关发出去了」，
+   真正的结果要看上面那一格 —— 这一点在提示文案里写清楚了，
+   免得看到「已发」而继电器没动时误判成成功。 */
+function sendCmd(v) {
+  var on = $('bon'), off = $('boff'), msg = $('ctlmsg');
+
+  on.disabled = off.disabled = true;
+  msg.className = '';
+  msg.textContent = '发送中…';
+
+  fetch('/api/cmd?v=' + v, { cache: 'no-store' })
+    .then(function (r) { return r.json(); })
+    .then(function (j) {
+      if (j && j.ok) {
+        msg.className = 'okmsg';
+        msg.textContent = (v ? '已发「吸合」' : '已发「断开」') + ' · 等 1 秒看上面「继电器」';
+      } else {
+        msg.className = 'errmsg';
+        msg.textContent = '失败：' + ((j && j.err) || '未知错误');
+      }
+    })
+    .catch(function () {
+      msg.className = 'errmsg';
+      msg.textContent = '失败：网关无响应';
+    })
+    .then(function () {
+      /* 1.2 秒后才能再点。防连点把「5 次重发」叠成 50 次占满射频，
+         但又不至于让人干等 —— 一秒多一点足够命令落地了。 */
+      setTimeout(function () { on.disabled = off.disabled = false; }, 1200);
+    });
+}
+
+$('bon').addEventListener('click',  function () { sendCmd(1); });
+$('boff').addEventListener('click', function () { sendCmd(0); });
+
 poll();
 </script>
 </body>

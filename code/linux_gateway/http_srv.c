@@ -27,6 +27,7 @@
 #include "http_srv.h"
 #include "gw_latest.h"
 #include "gw_alarm.h"       /* gw_alarm_state_name */
+#include "gw_cmd.h"         /* 第 5 步：/api/cmd 往 MQTT 发继电器命令 */
 #include "http_page.h"      /* g_index_html / g_index_html_len（由 tools/build_page.py 生成） */
 
 /* 浏览器有时候会先连一个 socket 憋着不发请求（预连接），
@@ -338,6 +339,67 @@ static int qs_int(const char *path, const char *key, int dflt)
  * 响应拼装
  *----------------------------------------------------------------------------*/
 
+/**
+ * /api/cmd?v=1 —— 远程开关继电器（第 5 步）
+ *
+ * 完整数据流（一段命令要过五个环节，任何一环断了都表现为"继电器不动"）：
+ *
+ *   浏览器
+ *     └─ GET /api/cmd?v=1
+ *          └─ gw：裸 socket 连本机 mosquitto，PUBLISH 到 zigbee/node1/cmd
+ *               └─ ESP32（MQTT 订阅者）：收 payload '1'，转成字节 0x41
+ *                    └─ UART1 写到协调器 P0_5
+ *                         └─ 协调器：单播给终端 + 隔 200ms 重发 5 次
+ *                              └─ 终端：relay_set(1) → P1_3 拉高 → 继电器吸合
+ *
+ * 为什么用 GET 而不是 POST（这是一个有意的取舍，不是疏忽）
+ * ------------------------------------------------------
+ *   本网关的 HTTP 解析**刻意只读请求头**（读到 \r\n\r\n 就停，不解析 body）。
+ *   要支持 POST 就得再实现 Content-Length 读取循环 + 分片重组，
+ *   为一个按钮增加这么多状态机不划算。
+ *
+ *   代价是"用 GET 改状态"不符合 REST 惯例：浏览器预取、爬虫、
+ *   用户在地址栏敲一下，都可能触发。所以做了两道限制：
+ *     · 参数必须显式给 v=1 或 v=0，缺省（v=-1）直接拒绝，**不猜**；
+ *     · 网关只在内网跑，公网上没有这个地址。
+ *   真要上公网，第一件事就是改成 POST + CSRF token，见 README「已知限制」。
+ *
+ * 为什么立即返回、不等结果
+ * ------------------------
+ *   命令从发出到终端执行要过 MQTT/串口/ZigBee 三段，最长约 1 秒。
+ *   HTTP 在这里阻塞等 1 秒，按钮就会转圈，体验很差。
+ *   页面本来就每 2 秒轮询 /api/latest，继电器状态下一轮自然就刷新了 ——
+ *   用户看到的是"按钮点完一秒内状态自己变了"，比转圈好得多。
+ */
+static size_t body_cmd(const char *path, char *out, size_t cap)
+{
+    size_t off = 0;
+    int    v   = qs_int(path, "v", -1);
+    int    rc;
+
+    if (v != 0 && v != 1) {
+        js(out, cap, &off,
+           "{\"ok\":0,\"err\":\"v 只能是 0（断开）或 1（吸合）\"}");
+        return off;
+    }
+
+    rc = gw_cmd_publish_default(v ? "1" : "0");
+
+    if (rc != GW_CMD_OK) {
+        /* 失败原因直接给中文，网页上原样显示。
+         * 这样"mosquitto 没起"和"端口写错"在页面上就能分开，
+         * 不用回来翻 journalctl。 */
+        js(out, cap, &off, "{\"ok\":0,\"v\":%d,\"err\":\"%s\"}",
+           v, gw_cmd_strerror(rc));
+        return off;
+    }
+
+    js(out, cap, &off,
+       "{\"ok\":1,\"v\":%d,\"msg\":\"已交给 ESP32，最多 1 秒后页面状态会变\"}",
+       v);
+    return off;
+}
+
 static const char *reason_of(int code)
 {
     switch (code) {
@@ -432,6 +494,9 @@ static size_t build_response(http_srv_t *s, const char *path, char *out, size_t 
             limit = 40;         /* body_alarms 的静态数组只有 40 个槽 */
         }
         blen = body_alarms(s, limit, g_body, sizeof(g_body));
+    } else if (PATH_IS("/api/cmd")) {
+        /* 第 5 步：远程开关继电器。参数 v=1 吸合 / v=0 断开 */
+        blen = body_cmd(path, g_body, sizeof(g_body));
     } else {
         code = 404;
         blen = (size_t)snprintf(g_body, sizeof(g_body),

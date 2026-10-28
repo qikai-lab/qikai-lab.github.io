@@ -7,10 +7,10 @@ LDLIBS  ?= -lsqlite3
 
 TARGET  = gw
 SRCS    = main.c gw_serial.c gw_frame.c gw_db.c gw_latest.c \
-          gw_filter.c gw_alarm.c http_srv.c
+          gw_filter.c gw_alarm.c http_srv.c gw_cmd.c
 OBJS    = $(SRCS:.c=.o)
 HDRS    = gw_serial.h gw_frame.h gw_db.h gw_latest.h \
-          gw_filter.h gw_alarm.h http_srv.h http_page.h
+          gw_filter.h gw_alarm.h http_srv.h http_page.h gw_cmd.h
 
 # 阶段 B：MQTT 订阅入库（独立程序，和 gw 是两条并行链路）
 # Ubuntu 上需要：sudo apt install libmosquitto-dev
@@ -39,7 +39,8 @@ web:
 #   test_filter 中值滤波 + 自适应基线 + 告警状态机（30 项）
 #   test_http   HTTP 响应拼装 + 5 个接口的 JSON（重点：Content-Length 必须和 body 一致）
 #   test_chain  端到端串联：假帧 → on_env → 滤波 → 告警 → 冻结 → 落库（M4 接线）
-test: tests/test_parse tests/test_recent tests/test_filter tests/test_http tests/test_chain
+#   test_cmd    第 5 步：MQTT CONNECT/PUBLISH 报文逐字节断言（不需要 broker）
+test: tests/test_parse tests/test_recent tests/test_filter tests/test_http tests/test_chain tests/test_cmd
 	@echo ""
 	./tests/test_parse
 	@echo ""
@@ -50,6 +51,8 @@ test: tests/test_parse tests/test_recent tests/test_filter tests/test_http tests
 	./tests/test_http
 	@echo ""
 	./tests/test_chain
+	@echo ""
+	./tests/test_cmd
 
 tests/test_parse: tests/test_parse.c gw_frame.c gw_db.c $(HDRS)
 	@mkdir -p tests
@@ -66,17 +69,26 @@ tests/test_filter: tests/test_filter.c gw_filter.c gw_alarm.c $(HDRS)
 
 # 注意：test_http.c 里 #include "http_srv.c"，所以这里**不能**再列 http_srv.c，
 # 否则符号重复定义。这是白盒测试的常用手法（为了访问 static 的 build_response）。
-tests/test_http: tests/test_http.c gw_latest.c gw_db.c gw_frame.c gw_filter.c gw_alarm.c $(HDRS)
+# 但 http_srv.c 现在会调 gw_cmd_publish_default()（第 5 步的 /api/cmd），
+# 所以必须带上 gw_cmd.c，否则链接期报 undefined reference。
+tests/test_http: tests/test_http.c gw_latest.c gw_db.c gw_frame.c gw_filter.c gw_alarm.c gw_cmd.c $(HDRS)
 	@mkdir -p tests
-	$(CC) $(CFLAGS) -I. $(LDFLAGS) -o $@ tests/test_http.c gw_latest.c gw_db.c gw_frame.c gw_filter.c gw_alarm.c $(LDLIBS)
+	$(CC) $(CFLAGS) -I. $(LDFLAGS) -o $@ tests/test_http.c gw_latest.c gw_db.c gw_frame.c gw_filter.c gw_alarm.c gw_cmd.c $(LDLIBS)
 
 # test_chain.c 里 #define main gw_main_unused 后 #include "main.c"，
 # 所以同样**不能**再列 main.c。它引用了 gw_serial_*，所以必须带上 gw_serial.c。
 tests/test_chain: tests/test_chain.c gw_serial.c gw_frame.c gw_db.c gw_latest.c \
-                  gw_filter.c gw_alarm.c http_srv.c $(HDRS)
+                  gw_filter.c gw_alarm.c http_srv.c gw_cmd.c $(HDRS)
 	@mkdir -p tests
 	$(CC) $(CFLAGS) -I. $(LDFLAGS) -o $@ tests/test_chain.c gw_serial.c gw_frame.c gw_db.c \
-	      gw_latest.c gw_filter.c gw_alarm.c http_srv.c $(LDLIBS)
+	      gw_latest.c gw_filter.c gw_alarm.c http_srv.c gw_cmd.c $(LDLIBS)
+
+# test_cmd.c 里 #include "gw_cmd.c"（白盒，要访问 static 的 put_remlen），
+# 所以这里**不能**再列 gw_cmd.c，否则符号重复。
+# 它不需要 sqlite / socket，纯拼包，任何有 gcc 的机器都能跑。
+tests/test_cmd: tests/test_cmd.c gw_cmd.c $(HDRS)
+	@mkdir -p tests
+	$(CC) $(CFLAGS) -I. $(LDFLAGS) -o $@ tests/test_cmd.c
 
 # 装成 systemd 服务（M5）。需要 sudo，会生成 /etc/systemd/system/zigbee-gw.service
 # 想换串口/端口：sudo ./install_service.sh /dev/ttyUSB1 9000
@@ -93,6 +105,7 @@ logs:
 clean:
 	rm -f $(OBJS) $(TARGET) $(TARGET_MQTT)
 	rm -f tests/test_parse tests/test_recent tests/test_filter tests/test_http tests/test_chain
+	rm -f tests/test_cmd
 	rm -f tests/*.exe tests/*.db tests/*.db-wal tests/*.db-shm
 	rm -f *.db *.db-wal *.db-shm
 

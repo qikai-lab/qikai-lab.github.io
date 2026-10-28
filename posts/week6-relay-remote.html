@@ -1,0 +1,600 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>第 6 周：远控继电器，以及「重发 5 次」把终端踢出网络的教训 · ZigBee 环境监测系统</title>
+<meta name="author" content="qikai-lab">
+<link rel="canonical" href="https://qikai-lab.github.io/posts/week6-relay-remote.html">
+<meta property="og:type" content="article">
+<meta property="og:site_name" content="ZigBee 无线环境监测系统 · 开发手记">
+<meta property="og:url" content="https://qikai-lab.github.io/posts/week6-relay-remote.html">
+<meta name="description" content="把 ZigBee 链路改成真正的双向：网页按钮 → Linux 网关手写 MQTT 报文 → ESP32 → 协调器 UART1 → 终端继电器。踩了两个连着的坑：广播必丢一半（命中率 25%），以及为治丢包加的「5 包跨 800ms 重发」反而把休眠终端挤出网络。最终 2 包 / 1000ms、8 次命令 8 次命中。">
+<link rel="stylesheet" href="../assets/css/style.css">
+</head>
+<body>
+
+<header class="site-header">
+  <nav class="nav">
+    <a class="brand" href="../index.html">
+      <span class="brand-mark">ZB</span>
+      <span>ZigBee 环境监测系统</span>
+    </a>
+    <div class="nav-links">
+      <a href="../index.html">首页</a>
+      <a href="project-overview.html">项目全景</a>
+      <a href="week0-bringup.html" class="active">开发日志</a>
+      <a href="pinout-reference.html">引脚速查</a>
+    </div>
+  </nav>
+</header>
+
+<main class="wrap">
+
+  <div class="post-header">
+    <div class="breadcrumb"><a href="../index.html">首页</a> / 开发日志</div>
+    <h1>第 6 周：远控继电器，以及「重发 5 次」把终端踢出网络的教训</h1>
+    <div class="post-meta">
+      <span>2026-10-28</span>
+      <span class="dot">·</span>
+      <span class="tag done">第 5 步已通过</span>
+      <span class="tag">Z-Stack</span>
+      <span class="tag">MQTT</span>
+      <span class="tag">Linux C</span>
+      <span class="tag">排障复盘</span>
+    </div>
+  </div>
+
+  <article class="prose">
+
+    <p>
+      前面五步，数据都是<strong>单向</strong>的：节点采集，一路往上传，最后落在网页的曲线上。
+      第 5 步要把它变成双向——在网页上点一个按钮，让电池供电的终端节点吸合继电器。
+    </p>
+
+    <p>
+      这一步写完只花了一天，但<strong>前后改了三版才真正稳</strong>。
+      第一版命中率 25%，第二版反而把终端节点挤出网络，
+      第三版才做到 8 次命令 8 次命中。
+      两个失败版本的原因都指向同一件事：<strong>我对「这个终端其实是休眠设备」这件事一直是错的。</strong>
+    </p>
+
+    <p>
+      这一阶段的源码在
+      <a href="../code/linux_gateway/"><code>code/linux_gateway/</code></a>：
+      MQTT 报文拼装在 <code>gw_cmd.c</code>，接口在 <code>http_srv.c</code> 的
+      <code>/api/cmd</code>，网页控制在 <code>web/index.html</code>。
+      协调器与终端的改动在 <code>coordinator.c</code> / <code>enddevice.c</code>（Z-Stack 工程，不在本仓库内）。
+    </p>
+
+    <h2 id="chain">一、整条链路有五段，每段都有独立的观察点</h2>
+
+    <p>
+      远控最容易犯的错是「点了没反应就开始改代码」。这段链路有五段，
+      任何一段断掉，现象都是「继电器不动」——但原因完全不同。
+      所以先把每一段的<strong>可观测信号</strong>定下来：
+    </p>
+
+<div class="table-wrap">
+  <table>
+    <thead>
+      <tr><th>#</th><th>这一段</th><th>怎么确认它通了</th></tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>1</td>
+        <td>浏览器 → <code>gw</code> 的 HTTP</td>
+        <td>页面 <code>#ctlmsg</code> 显示绿色「已发『吸合』」；<code>curl "/api/cmd?v=1"</code> 返回 <code>{"ok":true}</code></td>
+      </tr>
+      <tr>
+        <td>2</td>
+        <td><code>gw</code> → mosquitto</td>
+        <td><code>mosquitto_sub -t 'zigbee/node1/cmd' -v</code> 能收到那条 <code>1</code></td>
+      </tr>
+      <tr>
+        <td>3</td>
+        <td>mosquitto → ESP32</td>
+        <td>ESP32 串口打 <code>[收到命令] payload='1'</code> 和 <code>[下发] 0x41 → 协调器 P0_4</code></td>
+      </tr>
+      <tr>
+        <td>4</td>
+        <td>ESP32 → 协调器（UART1）</td>
+        <td>协调器 <strong>LED1 快闪 3 下</strong>（这是本版加进去的版本指示器，见第六节）</td>
+      </tr>
+      <tr>
+        <td>5</td>
+        <td>协调器 → 终端 → 继电器</td>
+        <td>终端屏幕 <code>RLY</code> 变 <code>ON</code>，能听到继电器「咔」</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+    <p>
+      命令编码早就定好了，就在 <code>GenericApp.h</code> 里：
+      <code>STO_MASK 0xc0</code>（仓库号）+ <code>DEV_MASK 0x30</code>（设备号）+ <code>CMD_MASK 0x0f</code>（动作）。
+      一个字节就够，<code>0x41</code> = 节点 1 · 继电器 · 吸合，<code>0x40</code> = 断开。
+    </p>
+
+    <h2 id="uart1">二、下行只能另开一路串口，因为 P0_2 上已经有人抢线</h2>
+
+    <p>
+      上行用的是 UART0（<code>P0_3</code> 发、<code>P0_2</code> 收）。按直觉，下行应该从 ESP32 发进
+      <code>P0_2</code>。但 <code>P0_2</code> 这根线上<strong>同时接着 CH340 的 TXD</strong>——
+      也就是 USB 转串口那一路。
+    </p>
+
+    <div class="callout warn">
+      <div class="callout-icon">!</div>
+      <div class="callout-body">
+        <strong>两个输出顶在同一个节点上，谁也别想赢。</strong>
+        CH340 空闲时输出高电平，会把 ESP32 想发的低电平直接盖掉，命令永远进不来。
+        这不是软件能协调的，是电气冲突。
+      </div>
+    </div>
+
+    <p>
+      所以下行改用 <strong>UART1</strong>：<code>P0_5</code> 在协调器板上只引到 P4 排针，
+      没接任何外设，正好空着。一条飞线 <code>GPIO17 → P0_5</code> 加一根地线就够。
+    </p>
+
+    <h3>这里有个反直觉的坑：UART1 的 RX/TX 和 UART0 是反的</h3>
+
+    <p>
+      UART0 备用位置 1 是「低脚收」——<code>P0_2</code>（RX，低位）/<code>P0_3</code>（TX，高位）。
+      把这个规律套到 UART1 上，会以为 <code>P0_4</code> 是 RX。错了：
+    </p>
+
+<div class="table-wrap">
+  <table>
+    <thead>
+      <tr><th></th><th>RX</th><th>TX</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>UART0 · 备用位置 1</td><td><code>P0_2</code>（低脚）</td><td><code>P0_3</code>（高脚）</td></tr>
+      <tr><td><strong>UART1 · 备用位置 1</strong></td><td><strong><code>P0_5</code>（高脚）</strong></td><td><strong><code>P0_4</code>（低脚）</strong></td></tr>
+    </tbody>
+  </table>
+</div>
+
+    <p>
+      <strong>UART1 是高脚收</strong>。依据是 CC2530 中文手册表 7-1（第 73 页），
+      USART1 的 UART 那一行 P0 部分写的是 <code>P0_5=RX / P0_4=TX</code>；
+      Z-Stack 自己的 <code>_hal_uart_dma.c</code> 里也有印证：
+    </p>
+
+<pre><span class="dim">// Components/hal/target/CC2530EB/_hal_uart_dma.c:155</span>
+#define HAL_UART_PERCFG_BIT 0x02   <span class="dim">// USART1 on P1, Alt-2</span></pre>
+
+    <p>
+      注意这句注释——<code>PERCFG</code> 那个位<strong>置 1 是跑到 P1 去</strong>（<code>P1_7/P1_6</code>，
+      正好是彩屏的 SCL/DC）。要用 P0，必须<strong>清位</strong>。
+      我第一次写成 <code>PERCFG |= 0x02</code>，结果一个字节都进不来，还顺手把彩屏搅了。
+    </p>
+
+    <h3>完整的初始化顺序</h3>
+
+    <p>
+      还有一处会互相覆盖：<code>APCFG</code> 的优先级高于 <code>P0SEL</code>（手册 7.6.6）。
+      <code>P0_4</code>/<code>P0_5</code> 恰好是 ADC 的 A4/A5，不先把 <code>APCFG</code> 里那两位清掉，
+      光设 <code>P0SEL</code> 是不生效的。
+    </p>
+
+<pre><span class="dim">/* 顺序不能换，每一步都有原因 */</span>
+APCFG  &amp;= ~0x30;   <span class="dim">/* ① 先关 ADC 功能，APCFG 覆盖 P0SEL */</span>
+P0SEL  |=  0x30;   <span class="dim">/* ② P0_4 / P0_5 → 外设功能 */</span>
+P0DIR  &amp;= ~0x30;   <span class="dim">/* ③ 两个都设输入 */</span>
+PERCFG &amp;= ~0x02;   <span class="dim">/* ④ U1CFG=0 → 位置 1 = P0_5(RX)/P0_4(TX) */</span>
+U1UCR   =  0x02;   <span class="dim">/* ⑤ 8N1 */</span>
+U1CSR   =  0x80;   <span class="dim">/* ⑥ UART 模式，收发先关 */</span>
+U1BAUD  =  216;    <span class="dim">/* ⑦ BAUD_M */</span>
+U1GCR   =  11;     <span class="dim">/* ⑧ BAUD_E → 115200 */</span>
+U1CSR  |=  0x40;   <span class="dim">/* ⑨ 只开 RX，TE 保持 0 */</span></pre>
+
+    <p>
+      收字节靠 <code>U1CSR</code> 的 bit2（<code>0x04</code>）判断，读 <code>U1DBUF</code> 会自动清标志。
+      <code>P2DIR.PRIP0</code> 我故意没动——它决定 USART0 和 USART1 谁优先，
+      动了有可能把已经跑通的上行抢掉。下行慢一点无所谓，上行不能丢。
+    </p>
+
+    <h2 id="v1">三、第一版：命中率 25%，因为广播根本不保证送达</h2>
+
+    <p>
+      第一版是照原版例程写的：目的地址 <code>AddrBroadcast</code>（<code>0xFFFF</code>），发一包完事。
+      实测控制率大约一半，甚至更差。
+    </p>
+
+    <div class="callout danger">
+      <div class="callout-icon">×</div>
+      <div class="callout-body">
+        <strong>广播帧在 MAC 层用的目的地址是 0xFFFF，收方不回 ACK，发送方因此不重传。</strong>
+        协议栈压根不知道有没有人收到。而终端每 1000ms 上报一帧，信道本来就半忙，
+        所以「一次广播 = 一半概率丢掉」是正常现象，不是 bug。
+      </div>
+    </div>
+
+    <p>
+      我第一轮老老实实数了 20 次命令，只成功 5 次——<strong>25%</strong>。
+      看起来像硬件坏了，其实是协议本身不保证。
+    </p>
+
+    <h2 id="v5">四、第二版：为了治丢包重发 5 次，结果把终端挤出网络</h2>
+
+    <p>
+      知道「广播必丢」之后，修法很自然：改成<strong>单播</strong>，并且<strong>多发几遍</strong>。
+      短地址从终端自己上报的帧里抄（<code>pkt-&gt;srcAddr.addr.shortAddr</code>），
+      终端重新入网换了地址也会自动更新。
+    </p>
+
+    <p>
+      第一版重发我写成 <code>for</code> 循环连发 3 次，实测只有 47%——几乎没改善。
+      原因很清楚：<strong>三次调用在同一毫秒进 MAC 队列</strong>，信道拥堵时它们撞的是同一段坏时间，
+      一起丢。等于还是只发了一次。
+    </p>
+
+    <p>
+      于是第二版改成状态机：<strong>隔 200ms 补发 4 次，共 5 包跨 800ms</strong>。
+      理论上全丢概率能压到万分之一。这次命中率确实上去了，
+      但冒出一个更严重的问题——
+    </p>
+
+    <div class="callout danger">
+      <div class="callout-icon">×</div>
+      <div class="callout-body">
+        <strong>发出命令后，终端节点很容易退出 ZigBee 网络；有时屏幕直接卡住不动、不再上报数据。</strong>
+        一旦它退出网络，就彻底控制不住了。
+        但只要它还在网络里，控制率是实打实的 100%。
+      </div>
+    </div>
+
+    <p>
+      「只要在网里就 100%」这句话是解题的钥匙：<strong>说明单包本来必达，那 5 包重发全是白加的负担。</strong>
+      问题不在无线质量，在负担本身。
+    </p>
+
+    <h3>根因：这个终端是休眠设备，不是常开电台</h3>
+
+    <p>
+      <code>f8wConfig.cfg</code> 里有几项终端专用配置，它们决定了这件设备的真实行为：
+    </p>
+
+<div class="table-wrap">
+  <table>
+    <thead>
+      <tr><th>配置项</th><th>值</th><th>意味着什么</th></tr>
+    </thead>
+    <tbody>
+      <tr><td><code>RFD_RCVC_ALWAYS_ON</code></td><td><strong>FALSE</strong></td><td>射频不是常开，可以睡</td></tr>
+      <tr><td><code>POLL_RATE</code></td><td><strong>1000</strong></td><td>每 <strong>1 秒</strong>才问父节点一次「有我的消息吗」</td></tr>
+      <tr><td><code>QUEUED_POLL_RATE</code></td><td>100</td><td>取到一条后 100ms 内再问一次（补队列）</td></tr>
+      <tr><td><code>NWK_INDIRECT_MSG_TIMEOUT</code></td><td><strong>7 秒</strong></td><td>父节点替它<strong>代收缓存</strong>，只留 7 秒</td></tr>
+      <tr><td><code>MAX_POLL_FAILURE_RETRIES</code></td><td><strong>2</strong></td><td><strong>连续 2 次</strong>问不到父节点就判失同步</td></tr>
+    </tbody>
+  </table>
+</div>
+
+    <p>
+      所以给休眠终端发单播命令，真正发生的<strong>不是</strong>「把帧打到空中」，
+      而是「塞进父节点的间接消息队列（默认只放 8 条），等它下次 poll 时再交给它」。于是：
+    </p>
+
+<pre><span class="dim">你按一次按钮</span>
+  ├─ 协调器往代收队列塞 <span class="ok">5 条</span>（每 200ms 一条）
+  ├─ 终端 1 秒才取 1 条 → 要 5 秒才清空
+  ├─ 手快再按两下 → 队列撞到 <span class="bad">8 条上限</span>
+  ├─ 协调器忙着重发 + 等 APS 确认，来不及回终端的 poll
+  └─ 终端连问 2 次没人应 → <span class="bad">判定失同步 → 退网重连</span></pre>
+
+    <p>
+      还有一个放大的因素：<code>APSC_ACK_WAIT_DURATION_POLLED</code> 被配成 3000，
+      单位是 2ms，也就是协调器每发一包要挂一个<strong>最长 6 秒</strong>的 APS 确认事务。
+      5 包 = 5 个事务同时挂着，APS/MAC 资源被占住，进一步拖慢对终端 poll 的响应。
+    </p>
+
+    <div class="callout info">
+      <div class="callout-icon">i</div>
+      <div class="callout-body">
+        <strong>送达到底靠什么保证？</strong>
+        靠「父节点代收 + 终端 poll 取走 + MAC 层 ACK」这三件事，而<strong>不是</strong> APS 确认。
+        对休眠设备额外要求 APS 确认，等于让一个刚睡醒的设备立刻再回一封信——
+        它确实会回，但代价是父节点要举着 6 秒的账本等。
+      </div>
+    </div>
+
+    <h2 id="v6">五、第三版：2 包 / 1000ms，把 APS 确认关掉</h2>
+
+    <p>
+      结论就是「减负到刚好」——重发次数和间隔都对齐终端的 poll 周期：
+    </p>
+
+<pre><span class="dim">/* coordinator.c */</span>
+#define COORD_CMD_RETRY        <span class="ok">1</span>    <span class="dim">/* 首次之外只补发 1 次（总共 2 包） */</span>
+#define COORD_CMD_RETRY_TICKS  <span class="ok">20</span>   <span class="dim">/* 20 × 50ms = 1000ms，对齐 POLL_RATE */</span>
+
+<span class="dim">/* 发送时 options 参数给 0，不再要 AF_ACK_REQUEST */</span>
+AF_DataRequest( &amp;dst, &amp;GenericApp_epDesc, GENERICAPP_CLUSTERID,
+                1, &amp;cmd, &amp;GenericApp_TransID,
+                <span class="ok">0</span>, AF_DEFAULT_RADIUS );</pre>
+
+    <p>
+      为什么 2 包就够：第 1 包在终端下一次 poll 时被取走，
+      取走之后 <code>QUEUED_POLL_RATE</code> 会让它 100ms 内再问一次，正好接走第 2 包。
+      队列里最多同时存在 2 条，100ms 就清空，撞不到 8 条上限。
+    </p>
+
+    <h2 id="indicator">六、加了一个 LED1 版本指示器，因为「没烧进去」看起来和「烧错了」一样</h2>
+
+    <p>
+      调试过程中我两次拿旧固件当新固件测——现象上完全看不出来，
+      因为旧版和新版在串口日志里一模一样。浪费的时间比写代码还多。
+      所以这一版给协调器加了<strong>一眼可辨的信号</strong>：
+    </p>
+
+<div class="table-wrap">
+  <table>
+    <thead>
+      <tr><th>收到命令后 LED1 的表现</th><th>含义</th></tr>
+    </thead>
+    <tbody>
+      <tr><td><strong>快闪 3 下</strong></td><td>新固件，且已拿到终端地址、走单播</td></tr>
+      <tr><td><strong>常亮约 0.4 秒</strong></td><td>新固件，但还没学到终端地址，退化成广播</td></tr>
+      <tr><td><strong>只翻转一下，不闪</strong></td><td>还是旧固件，压根没烧进去</td></tr>
+    </tbody>
+  </table>
+</div>
+
+    <p>
+      第三种情况就是当时要排除的。看到「只翻转不闪」，直接重烧，不用再猜。
+    </p>
+
+    <h2 id="verify">七、验收：8 次命令 8 次命中，50 帧无断档</h2>
+
+    <p>
+      烧完协调器后从网页和 MQTT 两条路各发几轮命令，ESP32 串口日志如下
+      （<code>payload</code> 来自 MQTT，<code>帧</code> 来自上行数据）：
+    </p>
+
+<pre><span class="dim">I (2257253) MQTT: [收到命令] payload='1'</span>
+I (2257253) BRIDGE: <span class="ok">[下发] 0x41 → 协调器 P0_4</span>
+I (2257686) BRIDGE: [帧 #861] n1  19.7C 52.0% lux=662(64%) gas=15 PIR=无人 <span class="dim">RLY=OFF</span>
+I (2257688) BRIDGE: [帧 #862] n1  19.7C 52.0% lux=662(64%) gas=15 PIR=无人 <span class="dim">RLY=OFF</span>
+I (2258706) BRIDGE: [帧 #863] n1  19.7C 52.0% lux=663(64%) gas=15 PIR=有人 <span class="ok">RLY=ON</span>
+I (2259683) BRIDGE: [帧 #864] n1  19.7C 52.0% lux=663(64%) gas=16 PIR=无人 <span class="ok">RLY=ON</span>
+I (2259689) MQTT: [收到命令] payload='0'
+I (2259694) BRIDGE: <span class="ok">[下发] 0x40 → 协调器 P0_4</span>
+I (2260702) BRIDGE: [帧 #866] n1  19.7C 52.0% lux=663(64%) gas=17 PIR=无人 <span class="dim">RLY=OFF</span>
+I (2261404) BRIDGE: ---- 5s: 字节=21131 帧=866 <span class="ok">坏帧=2 无效字节=347</span> | WiFi=通(-29dBm,断0次) MQTT=通 <span class="ok">发布=866 丢弃=0</span> ----</pre>
+
+    <p>
+      各项数字：
+    </p>
+
+<div class="table-wrap">
+  <table>
+    <thead>
+      <tr><th>指标</th><th>结果</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>命令命中率</td><td><strong>8 / 8（100%）</strong>，4 次吸合、4 次断开</td></tr>
+      <tr><td>帧连续性</td><td><code>#856 → #905</code>，<strong>50 帧无断档</strong>，终端全程没退网</td></tr>
+      <tr><td>坏帧</td><td>900 帧里 3 个（<strong>0.33%</strong>），<code>无效字节</code> 只涨了 24 —— 正好一帧</td></tr>
+      <tr><td>WiFi</td><td>断 <strong>0</strong> 次，RSSI −29 ~ −40dBm</td></tr>
+      <tr><td>MQTT</td><td><code>发布=902 丢弃=0</code></td></tr>
+      <tr><td>Linux 入库</td><td><code>有效帧=37 入库=37 库错=0</code>，库内累计 1058 条</td></tr>
+    </tbody>
+  </table>
+</div>
+
+    <p>
+      这是 Ubuntu 上的控制演示（手机竖屏拍摄，能听到继电器动作）：
+    </p>
+
+    <figure>
+      <video class="portrait" controls preload="metadata" playsinline>
+        <source src="../assets/video/relay-demo-ubuntu.mp4" type="video/mp4">
+        你的浏览器不支持 video 标签，可以直接
+        <a href="../assets/video/relay-demo-ubuntu.mp4">下载这段视频</a>。
+      </video>
+      <figcaption>
+        在 Ubuntu 终端里 <code>mosquitto_pub</code> 发命令，协调器 LED1 快闪、终端屏幕 <code>RLY</code> 翻转。
+        注意从发出命令到继电器响有 1 秒左右的延迟——这是休眠终端 <code>POLL_RATE=1000</code> 的固有代价
+      </figcaption>
+    </figure>
+
+    <p>
+      这是网页端的控制演示（录屏，点按钮直接操作）：
+    </p>
+
+    <figure>
+      <video controls preload="metadata" playsinline>
+        <source src="../assets/video/relay-demo-web.mp4" type="video/mp4">
+        你的浏览器不支持 video 标签，可以直接
+        <a href="../assets/video/relay-demo-web.mp4">下载这段视频</a>。
+      </video>
+      <figcaption>
+        页面中间那块「远程控制」就是这一步加的。点完按钮会立刻禁用 1.2 秒防连点，
+        然后等下面表格里的「继电器」那格翻转
+      </figcaption>
+    </figure>
+
+    <figure>
+      <img src="../assets/img/relay-web-control.png" alt="ESP-IDF 串口监视器截图：左侧是工程文件树，右侧日志连续打印 MQTT 收到命令 payload 1 和 0、BRIDGE 下发 0x41 和 0x40，以及每帧的 RLY=ON / RLY=OFF 变化，底部的统计行显示 坏帧=2 无效字节=347、发布=873 丢弃=0">
+      <figcaption>
+        命中率 100% 那一次的串口快照。看三件事：<code>下发 0x41</code> 之后两三帧内必然出现
+        <code>RLY=ON</code>；统计行 <code>丢弃=0</code>；<code>坏帧</code> 一直是 2 没涨
+      </figcaption>
+    </figure>
+
+    <h2 id="latency">八、诚实说明：延迟是 1~2.6 秒，不是「瞬间」</h2>
+
+    <p>
+      把命令时间戳和状态翻转的帧时间戳对齐，实测四次的延迟：
+    </p>
+
+<div class="table-wrap">
+  <table>
+    <thead>
+      <tr><th>下发时刻</th><th>RLY 翻转时刻</th><th>延迟</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>2257253</td><td>2258706</td><td>1.45 s</td></tr>
+      <tr><td>2261596</td><td>2262871</td><td>1.28 s</td></tr>
+      <tr><td>2266088</td><td>2268702</td><td><strong>2.61 s</strong></td></tr>
+      <tr><td>2272947</td><td>2274703</td><td>1.76 s</td></tr>
+    </tbody>
+  </table>
+</div>
+
+    <p>
+      这是休眠终端的设计代价，不是缺陷：它一秒才醒一次，命令最快也要等下一个 poll 周期。
+      2.61 秒那次是命令正好卡在两个 poll 之间、第 1 包没赶上、
+      等第 2 包（1 秒后补发）才被取走。
+    </p>
+
+    <p>
+      要更快只有两条路，都要重烧终端：把 <code>POLL_RATE</code> 降到 500（延迟砍半，功耗上升），
+      或者干脆 <code>RFD_RCVC_ALWAYS_ON = TRUE</code>（射频常开，命令直达，
+      但功耗从微安级跳到 30mA 上下，电池撑不过一天）。
+      <strong>插着 USB 的时候感觉不到差别，拔了电池就是另一个项目了。</strong>
+      所以这一版保持 1000 不动。
+    </p>
+
+    <h2 id="linux">九、Linux 侧：手写 MQTT 报文，不装 libmosquitto</h2>
+
+    <p>
+      <code>gw</code> 要主动发一条消息，最省事的做法是链 <code>libmosquitto</code>。
+      但这台 Ubuntu 16.04 上自带的 mosquitto 是 1.4.8，
+      对应的 <code>-dev</code> 包和现在的 API 差得不少，装上去反而多一层不确定。
+    </p>
+
+    <p>
+      而这里要发的其实只有两种报文，格式是公开且稳定的：
+    </p>
+
+<pre><span class="dim">CONNECT</span>  <span class="ok">0x10</span> + 剩余长度 + <span class="dim">00 04 "MQTT" 04 02 00 3C</span> + clientId
+<span class="dim">PUBLISH</span>  <span class="ok">0x30</span> + 剩余长度 + topic 长度(2字节) + topic + payload</pre>
+
+    <p>
+      剩下的事就是裸 socket：<code>getaddrinfo</code> → 非阻塞 <code>connect</code> →
+      <code>select</code> 等可写 → 用 <code>SO_ERROR</code> 复查一次。
+      最后一步很关键，非阻塞 <code>connect</code> 返回 0 或者 <code>EINPROGRESS</code> 都不代表成功，
+      <code>SO_ERROR</code> 才是真的答案。
+    </p>
+
+    <div class="callout success">
+      <div class="callout-icon">✓</div>
+      <div class="callout-body">
+        <strong>发完 PUBLISH 必须等 CONNACK。</strong>
+        <code>0x20 0x02 0x00 0x00</code> 这四字节是「broker 到底在不在」的唯一可靠判据。
+        只发不读的话，把 broker 停掉、把密码填错、把端口改错，
+        本地全都是「发送成功」——而消息一条都没发出去。
+      </div>
+    </div>
+
+    <p>
+      这套拼包逻辑写成了纯函数，所以可以在没有网络的机器上做逐字节断言：
+      <code>tests/test_cmd.c</code> 里 20 项，全部拿标准报文对照，
+      连「主题长到剩余长度需要两字节变长整数」这种情况也覆盖了（<code>0x85 0x01</code>）。
+      加上原有的 178 项，离线断言总数变成 <strong>198 项</strong>，不需要任何硬件就能跑：
+    </p>
+
+<pre><span class="dim">$ make test</span>
+...
+<span class="ok">通过 198 项，失败 0 项</span></pre>
+
+    <h2 id="limits">十、已知限制</h2>
+
+    <ol>
+      <li>
+        <strong>没有 CRC</strong>，靠帧头 + 字段范围校验。一个字节被打歪就可能触发整帧丢弃，
+        实测丢帧率 0.3%~3%，取决于线路质量。这是设计时就接受的代价。
+      </li>
+      <li>
+        <strong>命令有 1~2.6 秒延迟</strong>，原因在休眠终端的 poll 周期，见第八节。
+      </li>
+      <li>
+        <strong><code>/api/cmd</code> 用的是 GET</strong>，按 REST 惯例改状态的接口应该是 POST。
+        这里选择 GET 是因为网页端 <code>fetch</code> 和 <code>curl</code> 都更省事，
+        而且这个接口本身就是幂等的（重复发 <code>v=1</code> 结果一样）。属于刻意的取舍，不是疏忽。
+      </li>
+      <li>
+        <strong>网页 HTML 已经 14739 字节</strong>，逼近 <code>HTTP_RESP_MAX</code>（16384）的上限。
+        再往里加功能之前必须先精简页面，否则会被截断成半张。
+      </li>
+      <li>
+        <strong>没做掉线续传</strong>。曾经想过在 ESP32 上缓存断网期间的数据、恢复后补发，
+        最后决定不做：几百条数据挤在同一秒补发，曲线上会形成一个<strong>假台阶</strong>，
+        比丢数据更误导人。
+      </li>
+    </ol>
+
+    <h2 id="lessons">十一、这轮的收获</h2>
+
+    <ol>
+      <li>
+        <strong>「只要在网里就 100%」这句话本身就是诊断结论。</strong>
+        它一次性排除了无线质量、排除了天线、排除了距离，
+        把问题锁死在「我们的发送方式」上。观测到一个稳定的边界条件，
+        比多测十次都有用。
+      </li>
+      <li>
+        <strong>同一个手法，换个设备类型可能就是反作用。</strong>
+        间隙重发对广播是对的——广播没人回 ACK，你不重发就是赌运气。
+        但对休眠单播是错的——父节点本来就替你缓存着，你重发只是往那个 8 条的队列里堆垃圾。
+        <strong>「重发」这个词背后，要问的是「谁替我保证送达」。</strong>
+      </li>
+      <li>
+        <strong>协议栈的默认值全都是「假设你知道自己在干什么」。</strong>
+        <code>MAX_POLL_FAILURE_RETRIES = 2</code> 意味着 2 秒问不到父节点就退网重连。
+        写应用层的时候如果不知道这个数，就会把「退网」归因到硬件、天线、干扰上，
+        而真正的原因是自己把父节点忙死了。
+      </li>
+      <li>
+        <strong>调试工具本身要能自证。</strong>
+        LED1 那个「快闪 3 下 / 常亮 0.4 秒 / 只翻转一下」三态指示器，
+        解决的不是功能问题，是「我到底有没有烧进去」这个元问题。
+        两次拿旧固件当新固件测的代价，比加这段代码高得多。
+      </li>
+      <li>
+        <strong>看起来是「数据库坏了」的报错，八成是「有两个我在跑」。</strong>
+        <code>insert: database is locked</code> 出现时，第一反应不该是修 SQL，
+        而是先 <code>ps aux | grep</code> 数一下有几个进程。
+        这次就是前一个手动启动的实例还活着，占着库；杀掉之后 <code>入库=37 库错=0</code>。
+      </li>
+      <li>
+        <strong>能不用库就不用库。</strong>
+        为了发两种固定格式的报文去装一个 <code>-dev</code> 包，
+        换来的是版本耦合和一堆看不见的初始化行为。
+        手写 60 行、配 20 项逐字节断言，反而更可控、更好测。
+      </li>
+    </ol>
+
+    <div class="callout success">
+      <div class="callout-icon">→</div>
+      <div class="callout-body">
+        <strong>五步全部走完。</strong>
+        从一块 CC2530 到一个能在网页上点按钮、让电池节点动作的完整闭环。
+        剩下的都是可选项：mDNS（换热点不用重烧固件）、SNTP + TLS、
+        告警推送、0.91 寸 OLED 状态屏。
+        这些都不影响主链路，做不做取决于还有多少时间。
+      </div>
+    </div>
+
+    <div class="post-footer">
+      <a class="btn" href="week5-esp32-bridge.html">← 第 5 周：ESP32 上云</a>
+      <a class="btn btn-primary" href="../code/linux_gateway/">看服务端源码 →</a>
+    </div>
+
+  </article>
+
+</main>
+
+<footer class="site-footer">
+  <div class="wrap-wide">
+    <span>ZigBee 无线环境监测系统 · 开发手记 · by qikai-lab</span>
+    <span>最近更新：2026-10-28</span>
+  </div>
+</footer>
+
+</body>
+</html>
