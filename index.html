@@ -3,13 +3,13 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>ZigBee 无线环境监测系统 · 开发手记</title>
+<title>qikai-lab · 项目手记</title>
 <meta name="author" content="qikai-lab">
 <link rel="canonical" href="https://qikai-lab.github.io/">
-<meta property="og:type" content="article">
-<meta property="og:site_name" content="ZigBee 无线环境监测系统 · 开发手记">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="qikai-lab · 项目手记">
 <meta property="og:url" content="https://qikai-lab.github.io/">
-<meta name="description" content="从一块 CC2530 开始做一个完整的物联网项目：传感器节点、ZigBee 组网、ESP32 网关、Ubuntu 服务器与网页端。完整记录踩坑与实现过程。">
+<meta name="description" content="自己动手做完的嵌入式 / 物联网项目记录。从一颗 8 位 MCU 的寄存器，写到 Linux 上跑着的 C 服务端——包括走错的那几版，以及用来证明它跑通了的数据。">
 <link rel="stylesheet" href="assets/css/style.css">
 </head>
 <body>
@@ -17,14 +17,14 @@
 <header class="site-header">
   <nav class="nav">
     <a class="brand" href="index.html">
-      <span class="brand-mark">ZB</span>
-      <span>ZigBee 环境监测系统</span>
+      <span class="brand-mark">QL</span>
+      <span>qikai-lab · 项目手记</span>
     </a>
     <div class="nav-links">
       <a href="index.html" class="active">首页</a>
-      <a href="posts/project-overview.html">项目全景</a>
-      <a href="posts/week0-bringup.html">开发日志</a>
-      <a href="posts/pinout-reference.html">引脚速查</a>
+      <a href="#projects">项目</a>
+      <a href="projects/zigbee-env-monitor.html#logs">日志</a>
+      <a href="#about">关于</a>
     </div>
   </nav>
 </header>
@@ -36,30 +36,27 @@
     <div class="wrap-wide">
       <span class="hero-kicker">
         <svg width="12" height="12" viewBox="0 0 12 12" fill="none"><circle cx="6" cy="6" r="4" fill="#0d9488"/></svg>
-        IoT 应用开发 · 实战项目
+        嵌入式 · 物联网 · 从裸机到服务端
       </span>
-      <h1>从一块 <em>CC2530</em> 开始，<br>做一个能写进简历的物联网项目</h1>
+      <h1>把东西做完，<br>再写清楚中间<em>走错</em>的那几段</h1>
       <p>
-        电池供电的传感器节点采集温湿度、烟雾、光照与人体感应，经 ZigBee 协调器汇聚，
-        串口送进 Ubuntu 上的 C 网关：落库、出曲线、判定烟雾告警、网页远程控制继电器；
-        另一路经 ESP32-S3 转成 MQTT 上云，两条链路并行、互为交叉验证。
-        这里记录了从零到跑通的每一步，包括所有踩过的坑。
-        服务端源码在 <a href="code/linux_gateway/">code/linux_gateway/</a>（198 项离线断言，
-        无需任何硬件即可复现），网关固件在 <a href="code/esp32_bridge/">code/esp32_bridge/</a>。
+        这里是我自己动手做的项目。不是教程合集：每一篇记的都是当时真实发生的事——
+        哪一行写错了、为什么会错、最后用什么数据证明它对了。
+        方向上偏底层，从一颗 8 位 MCU 的寄存器配置，一路写到 Linux 上跑着的 C 服务端。
       </p>
 
       <div class="hero-stats">
         <div class="stat">
+          <div class="stat-num">1</div>
+          <div class="stat-label">在做的项目</div>
+        </div>
+        <div class="stat">
+          <div class="stat-num">9</div>
+          <div class="stat-label">开发手记</div>
+        </div>
+        <div class="stat">
           <div class="stat-num">4</div>
-          <div class="stat-label">系统分层</div>
-        </div>
-        <div class="stat">
-          <div class="stat-num">5</div>
-          <div class="stat-label">实施步骤</div>
-        </div>
-        <div class="stat">
-          <div class="stat-num">8</div>
-          <div class="stat-label">板载外设</div>
+          <div class="stat-label">全链路的分层</div>
         </div>
         <div class="stat">
           <div class="stat-num">198</div>
@@ -69,11 +66,55 @@
     </div>
   </section>
 
-  <!-- ==================== 文章列表 ==================== -->
+  <!-- ==================== 项目 ==================== -->
+  <div class="wrap-wide" id="projects">
+    <div class="section-head">
+      <h2>在做的事</h2>
+      <span>按最近更新排序</span>
+    </div>
+
+    <div class="post-list">
+
+      <a class="post-card" href="projects/zigbee-env-monitor.html">
+        <div class="post-card-top">
+          <span class="tag done">第 5 步已通过</span>
+          <span class="tag">ZigBee</span>
+          <span class="tag">CC2530</span>
+          <span class="tag">ESP-IDF</span>
+          <span class="tag">Linux C</span>
+          <span class="post-date">2026-10-22 起 · 持续更新</span>
+        </div>
+        <h3>ZigBee 无线环境监测系统</h3>
+        <p>
+          电池供电的节点测温湿度、烟雾、光照、人体，经 ZigBee 汇聚到协调器；
+          一路串口进 Linux 网关落库、出曲线、判烟雾告警、网页远程控制继电器，
+          另一路并联给 ESP32 转成 MQTT 上云。两条链路同时跑，互为交叉验证。
+          四层全部自己写：裸机驱动、无线组网、网关固件、C 服务端。
+          目前 198 项离线断言、远控实测 8 次命令 8 次命中。
+        </p>
+      </a>
+
+      <div class="post-card placeholder">
+        <div class="post-card-top">
+          <span class="tag">筹备中</span>
+          <span class="post-date">还没开工，所以还没写</span>
+        </div>
+        <h3>下一个项目</h3>
+        <p>
+          手上还有 ESP32-S3 和第二块彩屏。等当前这个项目把低功耗和演示收尾做完，
+          再从「把网关搬到自己可控的公网机器上」和「换一颗别的 MCU 重写一遍采集层」里挑一个。
+          没动手之前不先写计划——写成「即将开始的宏伟项目」没什么意义。
+        </p>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- ==================== 最近写的 ==================== -->
   <div class="wrap-wide">
     <div class="section-head">
-      <h2>开发日志</h2>
-      <span>按时间倒序 · 全部为真实记录</span>
+      <h2>最近写的</h2>
+      <span>按时间倒序</span>
     </div>
 
     <div class="post-list">
@@ -84,15 +125,12 @@
           <span class="tag done">第 5 步已通过</span>
           <span class="tag">ZigBee 下行</span>
           <span class="tag">CC2530</span>
-          <span class="tag">MQTT 手写报文</span>
         </div>
         <h3>第 6 周：网页点一下，继电器就响——中间隔了三次翻车</h3>
         <p>
-          从网页按钮到继电器吸合，中间隔着 MQTT、ESP32、协调器、ZigBee 五段。
           第一版用广播发命令，20 次只成 5 次；第二版为了补丢包连发 5 次，
-          命中率上去了却把休眠终端挤出网络（屏幕定格、数据不刷新）。
-          真正的解是「单播 + 只补发 1 次 + 间隔对齐 POLL_RATE + 关掉 APS 确认」，
-          实测 8 次命令 8 次命中、50 帧无断档。附两段演示视频与「延迟 1~2.6 秒」的诚实说明。
+          命中率上去了却把休眠终端挤出网络。真正的解是「单播 + 只补发 1 次 +
+          间隔对齐 POLL_RATE + 关掉 APS 确认」，实测 8 次命令 8 次命中、50 帧无断档。
         </p>
       </a>
 
@@ -101,17 +139,13 @@
           <span class="post-date">2026-10-27</span>
           <span class="tag done">阶段 A / B 已通过</span>
           <span class="tag">ESP-IDF</span>
-          <span class="tag">UART</span>
           <span class="tag">MQTT</span>
         </div>
         <h3>第 5 周：ESP32 上云，以及「COM 口在」不等于「板子活着」</h3>
         <p>
-          协调器的串口信号并联一路喂给 ESP32-S3，走 WiFi + MQTT 上云。
           四个坑全和代码无关：设备管理器里有 COM 口但主芯片根本没上电；
-          自动下载电路不通，esptool 默认的 <code>default_reset</code>
-          每次把手动进好的下载模式踢掉；新版 EIM 安装器让 <code>idf.py</code> 找不到工具链；
-          换热点后 Ubuntu 抱着旧 DHCP 租约不换 IP，表现为「broker 明明在跑却连不上」。
-          附 60 帧零坏帧（阶段 A）与 156 帧零解析失败（阶段 B）的双链路对账数据。
+          自动下载电路不通，esptool 默认复位每次把手动进好的下载模式踢掉；
+          新版安装器让 <code>idf.py</code> 找不到工具链；换热点后 Ubuntu 抱着旧租约不换 IP。
         </p>
       </a>
 
@@ -122,153 +156,58 @@
           <span class="tag">Linux C</span>
           <span class="tag">epoll</span>
           <span class="tag">SQLite</span>
-          <span class="tag">systemd</span>
         </div>
         <h3>第 3 周：Linux 网关，以及为什么网页不能直接查数据库</h3>
         <p>
           纯 C 写完整链路：termios 串口、epoll 统一事件循环、SQLite WAL 批量提交、
-          手写 socket HTTP、网页编进二进制。核心是一个反直觉的发现——
-          批量提交让「库里最新的那条」永远落后 19 秒，所以实时数据必须走内存。
-          最后用 systemd 托管：<code>kill -9</code> 后 3 秒自动拉起，开机自启。
-        </p>
-      </a>
-
-      <a class="post-card" href="posts/week4-smoke-alarm.html">
-        <div class="post-card-top">
-          <span class="post-date">2026-10-24</span>
-          <span class="tag done">M4 已通过</span>
-          <span class="tag">信号处理</span>
-          <span class="tag">状态机</span>
-        </div>
-        <h3>第 4 周：烟雾告警，以及最容易写出「永远不报警」的那行代码</h3>
-        <p>
-          MQ-2 的读数没有绝对意义，所以不能写死阈值。中值滤波吃尖峰、自适应基线跟漂移、
-          迟滞防反复报——但真正的坑是判定顺序：只要把「更新基线」写在「判定」前面，
-          系统就会永久保持沉默，而且和「一切正常」输出完全一样。
-        </p>
-      </a>
-
-      <a class="post-card" href="posts/week2-network.html">
-        <div class="post-card-top">
-          <span class="post-date">2026-10-23</span>
-          <span class="tag done">第 2 步已通过</span>
-          <span class="tag">Z-Stack</span>
-          <span class="tag">OSAL</span>
-        </div>
-        <h3>第 2 周：ZigBee 组网，以及一个差点蒙混过关的设计错误</h3>
-        <p>
-          组网只花了半天，真正的问题是顺手一次断网测试撞出来的：终端一直没连上协调器时，
-          它连传感器都不采、屏幕也冻结——采集和上报被错误地绑在了同一个定时器上。
-          这不是 bug，是设计错误。
-        </p>
-      </a>
-
-      <a class="post-card" href="posts/week1-sensors.html">
-        <div class="post-card-top">
-          <span class="post-date">2026-10-23</span>
-          <span class="tag done">第 1 步已通过</span>
-          <span class="tag">ADC</span>
-          <span class="tag">排障复盘</span>
-        </div>
-        <h3>第 1 周：五个传感器全部打通</h3>
-        <p>
-          温湿度、光照、烟雾、人体红外、继电器全部读通。真正花时间的只有 ADC 那两路，
-          而且我连续改错了三次——取位错、把 ADC 自己占死、最后发现 ECH 是 4 位不是 3 位。
-          这篇把三次弯路和最后的铁证完整写下来了。
-        </p>
-      </a>
-
-      <a class="post-card" href="posts/week0-bringup.html">
-        <div class="post-card-top">
-          <span class="post-date">2026-10-22</span>
-          <span class="tag done">M3 已通过</span>
-          <span class="tag">CC2530</span>
-          <span class="tag">IAR</span>
-        </div>
-        <h3>第 0 周：让 CC2530 跑起自己写的代码</h3>
-        <p>
-          从点亮 LED 到串口打印，中间踩了五个坑：IAR 版本与协议栈不匹配、Flash Programmer 2 根本不认 CC2530、
-          蜂鸣器上电长鸣、编译出来没有 <code>.hex</code>、中文注释全乱码。
-          这篇把每个坑的现象、根因和最终解法都写清楚了。
-        </p>
-      </a>
-
-      <a class="post-card" href="posts/project-overview.html">
-        <div class="post-card-top">
-          <span class="post-date">2026-10-22</span>
-          <span class="tag accent">项目设计</span>
-          <span class="tag">架构</span>
-        </div>
-        <h3>项目全景：这个系统到底长什么样</h3>
-        <p>
-          四层架构、六个可演示功能、五步实施路线，以及为什么最终砍掉了另外三个候选方案。
-          如果你也在一块 MCU 和一堆模块之间不知道该做什么，这篇是决策过程。
-        </p>
-      </a>
-
-      <a class="post-card" href="posts/pinout-reference.html">
-        <div class="post-card-top">
-          <span class="post-date">2026-10-22</span>
-          <span class="tag accent">参考资料</span>
-          <span class="tag">硬件</span>
-        </div>
-        <h3>终端节点板引脚速查表</h3>
-        <p>
-          从课程原版工程源码逐条核对出来的引脚分配，含 ADC 通道选择方法与三条铁律。
-          之前那份从原理图 PDF 提取的版本是错的，这篇记录了错在哪、为什么错。
+          手写 socket HTTP。核心是一个反直觉的发现——批量提交让「库里最新的那条」
+          永远落后 19 秒，所以实时数据必须走内存。
         </p>
       </a>
 
     </div>
 
-    <!-- ==================== 技术栈 ==================== -->
+    <p class="more-link">
+      <a href="projects/zigbee-env-monitor.html#logs">看全部 9 篇 →</a>
+    </p>
+  </div>
+
+  <!-- ==================== 关于 ==================== -->
+  <div class="wrap-wide" id="about">
     <div class="section-head">
-      <h2>技术栈</h2>
-      <span>按层次划分</span>
+      <h2>关于这个站</h2>
+      <span>写给以后会忘事的自己</span>
     </div>
 
-    <div class="table-wrap">
-      <table>
-        <thead>
-          <tr>
-            <th>层级</th>
-            <th>核心组件</th>
-            <th>技术点</th>
-          </tr>
-        </thead>
-        <tbody>
-          <tr>
-            <td><strong>感知层</strong></td>
-            <td>CC2530F256 + 板载传感器</td>
-            <td>裸机 GPIO / ADC / 单总线、UART、1.44" TFT 彩屏</td>
-          </tr>
-          <tr>
-            <td><strong>网络层</strong></td>
-            <td>CC2530 协调器 + 终端节点</td>
-            <td>IEEE 802.15.4、Z-Stack 2.5.1a、OSAL 任务调度、24 字节定长帧 + 字段范围校验</td>
-          </tr>
-          <tr>
-            <td><strong>网关层</strong></td>
-            <td>ESP32-S3 N16R8</td>
-            <td>ESP-IDF v5.5、UART 透传 24 字节定长帧、WiFi 状态机与延后重连、MQTT QoS1 + 遗嘱消息（LWT）</td>
-          </tr>
-          <tr>
-            <td><strong>应用层</strong></td>
-            <td>Ubuntu + C 服务端</td>
-            <td>termios / epoll / signalfd 单线程事件循环、SQLite WAL + 批量事务、手写 socket HTTP、中值滤波 + 自适应基线 + 告警状态机</td>
-          </tr>
-        </tbody>
-      </table>
+    <div class="about">
+      <p>
+        我是 <strong>qikai-lab</strong>，做嵌入式和物联网方向的东西。这个站只放自己动手做完的项目，
+        不放转载、不放资料整理。现在只有一个项目，往后会有更多。
+      </p>
+      <p>
+        写法上有两条自己定的规矩。一是<strong>只写真实发生过的事</strong>：
+        写错的那几版留着，因为「为什么错」比「正确做法」有用得多，
+        三个月后回来看的也是这部分。二是<strong>给可以对照的现象和数据</strong>——
+        帧数、坏帧率、延迟几秒、哪一次是 8/8 命中，
+        而不是一句「效果很好」。
+      </p>
+      <p>
+        这些手记是按时间顺序写的，不是按知识点整理的，所以前因后果散在各篇里。
+        想快速看结论走<a href="projects/zigbee-env-monitor.html">项目页</a>，
+        那里有架构图、技术栈、当前进度和可下载的源码。
+      </p>
+      <p>
+        代码在 GitHub：<a href="https://github.com/qikai-lab">github.com/qikai-lab</a>。
+      </p>
     </div>
-
   </div>
 
 </main>
 
 <footer class="site-footer">
   <div class="wrap-wide">
-    <span>ZigBee 无线环境监测系统 · 开发手记 · by qikai-lab</span>
-    <span>最近更新：2026-10-27</span>
+    <span>qikai-lab · 项目手记</span>
+    <span>最近更新：2026-10-28</span>
   </div>
 </footer>
 

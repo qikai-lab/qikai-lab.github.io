@@ -17,14 +17,14 @@
 <header class="site-header">
   <nav class="nav">
     <a class="brand" href="../index.html">
-      <span class="brand-mark">ZB</span>
-      <span>ZigBee 环境监测系统</span>
+      <span class="brand-mark">QL</span>
+      <span>qikai-lab · 项目手记</span>
     </a>
     <div class="nav-links">
       <a href="../index.html">首页</a>
-      <a href="project-overview.html">项目全景</a>
-      <a href="week0-bringup.html" class="active">开发日志</a>
-      <a href="pinout-reference.html">引脚速查</a>
+      <a href="../index.html#projects">项目</a>
+      <a href="../projects/zigbee-env-monitor.html#logs" class="active">日志</a>
+      <a href="../index.html#about">关于</a>
     </div>
   </nav>
 </header>
@@ -32,7 +32,7 @@
 <main class="wrap">
 
   <div class="post-header">
-    <div class="breadcrumb"><a href="../index.html">首页</a> / 开发日志</div>
+    <div class="breadcrumb"><a href="../index.html">首页</a> / <a href="../projects/zigbee-env-monitor.html">ZigBee 环境监测</a> / 开发日志</div>
     <h1>第 2 周：ZigBee 组网，以及一个差点蒙混过关的设计错误</h1>
     <div class="post-meta">
       <span>2026-10-23</span>
@@ -350,12 +350,12 @@ if ( events &amp; GENERICAPP_SEND_MSG_EVT ) {
       <div class="callout-body">
         <strong>下一步（第 3 步）</strong>：Ubuntu 上用 C 读串口，把 24 字节帧解出来落进 SQLite，
         再起一个 HTTP 服务把曲线画到网页上。这一步是整个项目里代码量最大、
-        也最贴近「嵌入式 Linux 应用开发」岗位要求的部分。
+        也是 Linux 那一层最吃重的部分。
       </div>
     </div>
 
     <div class="post-footer">
-      <a class="btn" href="../index.html">← 返回首页</a>
+      <a class="btn" href="../projects/zigbee-env-monitor.html">← 返回项目页</a>
       <a class="btn btn-primary" href="week3-linux-gateway.html">第 3 周：Linux 网关 →</a>
     </div>
 
@@ -365,7 +365,7 @@ if ( events &amp; GENERICAPP_SEND_MSG_EVT ) {
 
 <footer class="site-footer">
   <div class="wrap-wide">
-    <span>ZigBee 无线环境监测系统 · 开发手记 · by qikai-lab</span>
+    <span>qikai-lab · 项目手记 — ZigBee 无线环境监测系统</span>
     <span>最近更新：2026-10-24</span>
   </div>
 </footer>

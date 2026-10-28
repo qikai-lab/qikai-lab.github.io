@@ -17,14 +17,14 @@
 <header class="site-header">
   <nav class="nav">
     <a class="brand" href="../index.html">
-      <span class="brand-mark">ZB</span>
-      <span>ZigBee 环境监测系统</span>
+      <span class="brand-mark">QL</span>
+      <span>qikai-lab · 项目手记</span>
     </a>
     <div class="nav-links">
       <a href="../index.html">首页</a>
-      <a href="project-overview.html" class="active">项目全景</a>
-      <a href="week0-bringup.html">开发日志</a>
-      <a href="pinout-reference.html">引脚速查</a>
+      <a href="../index.html#projects">项目</a>
+      <a href="../projects/zigbee-env-monitor.html#logs" class="active">日志</a>
+      <a href="../index.html#about">关于</a>
     </div>
   </nav>
 </header>
@@ -32,7 +32,7 @@
 <main class="wrap">
 
   <div class="post-header">
-    <div class="breadcrumb"><a href="../index.html">首页</a> / 项目全景</div>
+    <div class="breadcrumb"><a href="../index.html">首页</a> / <a href="../projects/zigbee-env-monitor.html">ZigBee 环境监测</a> / 项目全景</div>
     <h1>项目全景：这个系统到底长什么样</h1>
     <div class="post-meta">
       <span>2026-10-22</span>
@@ -69,9 +69,9 @@
     </div>
 
     <p>
-      这句话里包含了四个技术层次，每一层对应一类真实岗位能力：
+      这句话里其实是四个技术层次：
       嵌入式裸机开发、无线通信协议、网关协议转换、Linux 服务端开发。
-      这也是选它作为主项目的原因——<strong>一条链路能把四类能力全串起来</strong>。
+      选它当主项目就是因为<strong>一条链路能把四层全串起来</strong>——任何一层偷懒，整条链路都跑不通。
     </p>
 
     <h2 id="arch">二、四层架构</h2>
@@ -134,7 +134,7 @@
     </ul>
 
     <p>
-      更重要的是，ESP32 上能做的两件事在简历上有额外价值：
+      更重要的是，ESP32 这一层真正值得做的不是「加个 WiFi」，而是两件真实产品绕不开的事：
       <strong>MQTT 遗嘱机制（LWT）</strong>——设备掉线时 broker 自动广播离线消息，这是真实产品的必备能力；
       <strong>BLE 配网</strong>——手机把 WiFi 密码传给设备，而不是写死在固件里。
     </p>
@@ -219,8 +219,8 @@
           <tr>
             <td>RS485 / Modbus 工业数据采集</td>
             <td>
-              这是工业自动化方向的典型技能，跟目标岗位的应用场景重叠不多。
-              时间预算有限，优先投在更相关的地方。
+              工业自动化方向的典型技能，但它解决的是「长距离、有线的现场总线」问题，
+              跟我这套短距无线感知的场景不是一回事。时间有限，先投在能串成完整链路的地方。
             </td>
           </tr>
           <tr>
@@ -244,9 +244,11 @@
 
     <blockquote>
       <p>
-        选项目的标准不是「难不难」，而是<strong>「做完之后，简历上能写出几条对方感兴趣的东西」</strong>。
-        自平衡小车的 PID 调参很酷，但写的出来的是「调好了 PID」；
-        ZigBee + MQTT + Linux 服务端能写出来的是「设计并实现了一套四层物联网数据链路」。
+        选项目的标准不是「难不难」，而是<strong>「做完之后能讲清楚多少个具体的决策」</strong>。
+        自平衡小车把 PID 调好很酷，但能展开的只有「调参」；
+        而 ZigBee + MQTT + Linux 服务端这条链路上，每一环都有绕不过去的取舍——
+        帧格式要不要加校验、命令用广播还是单播、落库批量提交还是逐条写、
+        实时曲线从库里查还是走内存。这些才是做完之后真正留在手上的东西。
       </p>
     </blockquote>
 
@@ -312,7 +314,7 @@
 
     <p>
       如果只是「用 Python 读串口存进 SQLite，再用 Flask 起个网页」，那 Linux 部分大概只有两百行，
-      撑不起一个「嵌入式 Linux 应用开发」的岗位描述。
+      跟这套项目里「服务端要占大头」的定位对不上。
     </p>
 
     <p>
@@ -442,7 +444,7 @@
     </div>
 
     <div class="post-footer">
-      <a class="btn" href="../index.html">← 返回首页</a>
+      <a class="btn" href="../projects/zigbee-env-monitor.html">← 返回项目页</a>
       <a class="btn btn-primary" href="week0-bringup.html">第 0 周开发日志 →</a>
     </div>
 
@@ -452,7 +454,7 @@
 
 <footer class="site-footer">
   <div class="wrap-wide">
-    <span>ZigBee 无线环境监测系统 · 开发手记 · by qikai-lab</span>
+    <span>qikai-lab · 项目手记 — ZigBee 无线环境监测系统</span>
     <span>最近更新：2026-10-22</span>
   </div>
 </footer>

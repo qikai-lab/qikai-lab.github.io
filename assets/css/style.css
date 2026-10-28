@@ -276,6 +276,63 @@ body {
   line-height: 1.65;
 }
 
+/* 首页的「筹备中」占位卡：虚线 + 不可点 */
+.post-card.placeholder {
+  border-style: dashed;
+  background: var(--bg-soft);
+  cursor: default;
+}
+
+.post-card.placeholder:hover {
+  border-color: var(--border);
+  box-shadow: none;
+  transform: none;
+}
+
+.post-card.placeholder h3 { color: var(--text-soft); }
+
+/* 「看全部 →」这类行末链接 */
+.more-link {
+  margin: 18px 0 0;
+  font-size: 14.5px;
+}
+
+.more-link a {
+  color: var(--accent-dark);
+  text-decoration: none;
+  border-bottom: 1px solid transparent;
+  transition: border-color .15s;
+}
+
+.more-link a:hover { border-bottom-color: var(--accent); }
+
+/* 首页「关于这个站」区块 */
+.about {
+  padding: 26px 28px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-soft);
+}
+
+.about p {
+  margin: 0 0 15px;
+  font-size: 14.8px;
+  line-height: 1.8;
+  color: var(--text-soft);
+}
+
+.about p:last-child { margin-bottom: 0; }
+
+.about strong { color: #0f172a; font-weight: 700; }
+
+.about a {
+  color: var(--accent-dark);
+  text-decoration: none;
+  border-bottom: 1px solid #ccfbf1;
+}
+
+.about a:hover { border-bottom-color: var(--accent); }
+
 /* -------------------------------------------------------------------- 标签 */
 
 .tag {
