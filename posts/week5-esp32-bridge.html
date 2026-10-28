@@ -535,77 +535,123 @@ CONFIG_ESPTOOLPY_BEFORE_NORESET=y</pre>
     <p>
       「跑通了」和「可信」是两件事。真正能让人放心的，是<strong>两条链路能对上账</strong>：
       同一帧数据同时走串口和 WiFi，分别落进 <code>env_data</code> 和 <code>env_data_mqtt</code>，
-      同一时刻的数值应当几乎相同。不一样就说明中间某一段坏了，
-      而且还能立刻判断是哪一段。
+      同一时刻的数值应当几乎相同。不一样就说明中间某一段坏了，而且能立刻判断是哪一段。
+    </p>
+
+    <h3>ESP32 这一侧</h3>
+
+    <p>
+      连续跑 7 分钟，VSCode 里 ESP-IDF 监视器的输出是这样（截图为第 198~211 帧）：
+    </p>
+
+    <figure>
+      <img src="../assets/img/stage-b-serial-210.png" alt="ESP32-S3 串口监视器输出第 198 到 211 帧，每 5 秒一行统计，字节数从 4691 递增到 5051，帧数从 205 递增到 210，坏帧为 0，无效字节为 11，WiFi 通、信号 -28dBm、断线 0 次，MQTT 通、发布 210、丢弃 0">
+      <figcaption>
+        最后一行统计：<code>字节=5051 帧=210 坏帧=0 无效字节=11</code>，
+        WiFi <code>-27dBm</code>、<code>断0次</code>，MQTT <code>发布=210 丢弃=0</code>
+      </figcaption>
+    </figure>
+
+    <p>
+      <strong>这几个数字是可以互相验算的，这也是判断「数据是不是编的」最硬的办法：</strong>
+    </p>
+
+<pre>210 帧 × 24 字节 = 5040
+5040 + 11 个无效字节 = 5051      <span class="c">← 和日志里「字节=5051」完全一致</span></pre>
+
+    <p>
+      那 11 个无效字节是<strong>上电瞬间收到了半个帧</strong>（插 USB 的时候协调器正在吐数据），
+      属于必然发生的一次性损耗，不是线路问题。真正的线路质量指标是 <code>坏帧=0</code>。
+    </p>
+
+    <h3>服务端这一侧</h3>
+
+    <p>
+      订阅器每 5 秒打一行，截图是按下 Ctrl+C 收尾时的画面：
+    </p>
+
+    <figure>
+      <img src="../assets/img/stage-b-mqtt-sub.jpg" alt="Ubuntu 终端里 mqtt_sub 每 5 秒打印一行统计，收到与入库两个数字始终相等，从 59 一路涨到 195，解析失败始终为 0，疑似重复最终为 8，最后一行是累计收到 198 入库 198">
+      <figcaption>
+        <code>收到</code> 和 <code>入库</code> <strong>每一行都相等</strong>，从 59 一路涨到 195；
+        <code>解析失败</code> 全程为 0；收尾时累计 <code>收到=198 入库=198</code>
+      </figcaption>
+    </figure>
+
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr><th>计数</th><th>含义</th><th>这次的值</th><th>该怎么读</th></tr>
+        </thead>
+        <tbody>
+          <tr><td><code>收到</code></td><td>MQTT 主题上真的来了多少条</td><td>198</td><td>和 ESP32 的 <code>发布</code> 差 12，见下</td></tr>
+          <tr><td><code>入库</code></td><td>成功写进 SQLite 多少条</td><td>198</td><td><strong>等于「收到」→ 没有写库失败</strong></td></tr>
+          <tr><td><code>解析失败</code></td><td>JSON 字段缺失/类型不对</td><td>0</td><td>两端字段名和口径一致</td></tr>
+          <tr><td><code>疑似重复</code></td><td>与上一条各字段完全相同</td><td>8</td><td>见下，不是 MQTT 重发</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <p>
+      <strong>210 和 198 差 12 条，不是丢包</strong>：<code>mqtt_sub</code> 比 ESP32 晚启动了 12 秒，
+      前面那 12 帧它还没开始监听。想判断有没有真丢，只看「收到 = 入库」这一项就够了。
     </p>
 
     <p>
-      ESP32 侧跑 10 分钟，串口统计行是这样的：
-    </p>
-
-<pre><span class="c">I (142300) BRIDGE: ---- 5s: 字节=120 帧=5 坏帧=0 无效字节=0 | WiFi=通(10.233.60.204,-22dBm,断0次) MQTT=通 发布=5 丢弃=0 ----</span>
-<span class="c">I (202300) BRIDGE: ---- 5s: 字节=3096 帧=129 坏帧=2 无效字节=0 | WiFi=通(10.233.60.204,-31dBm,断1次) MQTT=通 发布=129 丢弃=13 ----</span></pre>
-
-    <p>
-      服务端订阅器同时记着：
-    </p>
-
-<pre><span class="c">[MQTT] 收到=156  入库=156  解析失败=0  疑似重复=32  无效字节=0</span>
-<span class="c">$ sqlite3 env_mqtt.db "select id,temp_x10,hum_x10,lux,gas from env_data_mqtt order by id desc limit 5;"</span>
-788|203|550|674|18
-787|203|550|674|18
-786|203|550|674|18
-785|203|550|674|18
-784|203|550|674|18</pre>
-
-    <p>
-      <code>temp_x10=203</code> 就是 20.3 °C，<code>hum_x10=550</code> 是 55.0 %——
-      和串口那一侧同口径，服务端不需要做任何浮点换算。四个计数各有明确含义，别混着看：
-    </p>
-
-<div class="table-wrap">
-  <table>
-    <thead>
-      <tr><th>计数</th><th>含义</th><th>这次的值</th><th>该怎么读</th></tr>
-    </thead>
-    <tbody>
-      <tr><td><code>收到</code></td><td>MQTT 主题上真的来了多少条</td><td>156</td><td>和 ESP32 的 <code>发布</code> 对得上</td></tr>
-      <tr><td><code>入库</code></td><td>成功写进 SQLite 多少条</td><td>156</td><td><strong>等于「收到」→ 没有写库失败</strong></td></tr>
-      <tr><td><code>解析失败</code></td><td>JSON 字段缺失/类型不对</td><td>0</td><td>两端字段名和口径一致</td></tr>
-      <tr><td><code>疑似重复</code></td><td>与上一条 (node, 各字段) 完全相同</td><td>32</td><td>见下，不是 MQTT 重发</td></tr>
-    </tbody>
-  </table>
-</div>
-
-    <p>
-      <code>疑似重复=32</code> 一开始最容易被当成 QoS 1 的锅，实际不是。
-      去翻原始日志就明白了：
+      <code>疑似重复</code> 最容易让人以为是 QoS 1 在重发，其实不是。
+      翻原始日志就明白了——同一个毫秒、同样的数值连着出现两次：
     </p>
 
 <pre><span class="c">I (68120) BRIDGE: [帧 #8] n1  20.1C  55.0%  lux= 674(65%)  gas=  18  PIR=无人  RLY=OFF</span>
 <span class="c">I (68120) BRIDGE: [帧 #9] n1  20.1C  55.0%  lux= 674(65%)  gas=  18  PIR=无人  RLY=OFF</span></pre>
 
     <p>
-      <strong>同一个毫秒、同样的数值，是协调器自己连吐了两帧</strong>。
-      ZigBee 那边一次上报被拆成了两次串口输出，ESP32 只是如实转发。
-      这也说明「疑似重复」这个统计放在服务端是对的——它是链路的体检指标，
+      是<strong>协调器自己连吐了两帧</strong>：ZigBee 那边一次上报被拆成两次串口输出，
+      ESP32 只是如实转发。所以「疑似重复」放在服务端统计是对的——它是链路的体检指标，
       不是需要修的错误。
     </p>
 
+    <div class="callout success">
+      <div class="callout-icon">✓</div>
+      <div class="callout-body">
+        <strong><code>丢弃=0</code> 是这次改代码最直接的成果。</strong>
+        前一天同一套逻辑跑出来是 <code>丢弃=13</code>：MQTT 从上电到连上花了 10718 ms，
+        这段时间协调器已经吐了 13 帧，而未连接时 <code>mqtt_pub_env()</code> 只计数不排队，
+        于是正好丢 13 条（<strong>10718 ÷ 800 ms/帧 ≈ 13</strong>）。<br><br>
+        修法不是加缓存补发，而是<strong>调启动顺序</strong>：先等 WiFi 拿到 IP 再启 MQTT，
+        这样客户端一次就连上，<code>丢弃</code> 从 13 直接变成 0。
+      </div>
+    </div>
+
+    <h3>串口那条链路也一直没停</h3>
+
     <p>
-      另一个看起来像故障、实际完全自洽的是 <code>丢弃=13</code>：
-      ESP32 从上电到 MQTT 连上花了 10718 ms，这段时间里协调器已经吐了 13 帧，
-      而 <code>mqtt_pub_env()</code> 在未连接时只计数不排队，所以正好丢 13 条。
-      <strong>10718 ms ÷ 800 ms/帧 ≈ 13</strong>，对得上。
+      CH340 那一路从第 3 步起就在跑——<code>gw</code> 网关读串口、写 <code>env_data</code>、给网页供数据。
+      这是另一时刻的网页：
+    </p>
+
+    <figure>
+      <img src="../assets/img/stage-b-web-dashboard.png" alt="Ubuntu 网关内置网页，显示温度 19.7 摄氏度、湿度 54.0%、光照 69%、烟雾 30 raw、人体红外无人、继电器 OFF、告警状态正常，右上角已收帧 142，下方是温湿度曲线和光照烟雾 raw 曲线">
+      <figcaption>
+        温度 <code>19.7 °C</code>、湿度 <code>54.0 %</code>、光照 <code>69 %</code>、烟雾 <code>30 raw</code>，
+        右上角已收帧 <code>#142</code>
+      </figcaption>
+    </figure>
+
+    <p>
+      对着看串口那张（<code>19.4C 54.0% lux=702(68%) gas=33</code>）：
+      <strong>湿度完全一致，光照差 1 个百分点</strong>，温度差 0.3 °C、烟雾差 3 ——
+      这两张截图本来就不同时刻，差这么点才是正常的；真错位的话是整段对不上，不是零点几。
     </p>
 
     <div class="callout info">
       <div class="callout-icon">i</div>
       <div class="callout-body">
-        <strong>长跑数据。</strong>15 分钟后 <code>env_data_mqtt</code> 从 97 条涨到 803 条，
-        零丢弃、零解析失败。同时用裸 socket 直接问 broker：
-        <code>$SYS/broker/publish/messages/received = 97</code>、<code>clients/connected = 3</code>，
-        说明设备真的在发、订阅端真的在收，不是本地伪造的假数据。
+        <strong>两套表、两套时间戳，是有意为之。</strong>
+        <code>env_data</code> 是「Ubuntu 从串口读到它的时刻」，
+        <code>env_data_mqtt</code> 是「Ubuntu 从 MQTT 收到它的时刻」，两边各记各的。
+        想精确到同一个瞬间，得在<strong>节点侧</strong>打时间戳（或者收 NTP），
+        这是在网关侧补发永远解决不了的。
       </div>
     </div>
 
@@ -653,11 +699,34 @@ ip -4 addr show          <span class="c"># 这时才变成 10.233.60.172/24</spa
       <tr><th>场景</th><th>Ubuntu 静态 IP 的表现</th></tr>
     </thead>
     <tbody>
-      <tr><td>还是 <code>ling</code> 这个热点，只是手机重启过</td><td><strong>有效</strong>，地址不会被 DHCP 分给别人</td></tr>
-      <tr><td>换到另一个热点（网段变了）</td><td><strong>更糟</strong>：静态地址不在新网段，连网关都不通，比 DHCP 还难救</td></tr>
+      <tr><td>同一个热点、同一次会话里</td><td><strong>有效</strong>，地址不会被 DHCP 分给别人</td></tr>
+      <tr><td><strong>手机热点重启过（哪怕还是 <code>ling</code>）</strong></td><td><strong>网段整个会变</strong>，见下</td></tr>
+      <tr><td>换到另一个热点</td><td><strong>更糟</strong>：静态地址不在新网段，连网关都不通，比 DHCP 还难救</td></tr>
     </tbody>
   </table>
 </div>
+
+    <p>
+      第二行不是推测，是第二天实测撞上的：<strong>同一个 <code>ling</code> 热点，前一天和第二天给的网段完全不同</strong>。
+    </p>
+
+<div class="table-wrap">
+  <table>
+    <thead>
+      <tr><th></th><th>10-27</th><th>10-28（热点重启后）</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>网段</td><td><code>10.233.60.0/24</code></td><td><code>10.236.232.0/24</code></td></tr>
+      <tr><td>网关</td><td><code>.236</code></td><td><strong><code>.59</code></strong>（不是 .1，也不是 .236）</td></tr>
+    </tbody>
+  </table>
+</div>
+
+    <p>
+      也就是说，静态 IP 连「同一个热点」都锁不死——手机重启一次，网段和网关全换，
+      <strong>Ubuntu 的静态地址和固件里的 broker 地址同时失效，还是得重新改、重新烧</strong>。
+      这次两天之内就发生了两回。
+    </p>
 
     <p>
       所以脚本里加了一道<strong>网段校验</strong>：设之前先比对「当前默认网关」和
@@ -669,7 +738,7 @@ ip -4 addr show          <span class="c"># 这时才变成 10.233.60.172/24</spa
 <pre><span class="c"># 只看现状（安全，什么都不改）</span>
 sudo bash set_static_ip.sh --show
 
-<span class="c"># 钉死成 10.233.60.172</span>
+<span class="c"># 钉死成 10.236.232.172（要和固件 app_cfg.h 里的 APP_MQTT_URI 一致）</span>
 sudo bash set_static_ip.sh
 
 <span class="c"># 出问题时退回自动获取</span>
@@ -678,11 +747,12 @@ sudo bash set_static_ip.sh --dhcp</pre>
     <div class="callout warn">
       <div class="callout-icon">!</div>
       <div class="callout-body">
-        <strong>静态 IP 只是止血，不是根治。</strong>
-        它把「同一个热点下地址漂移」这一种情况解决了，但「换热点」本身没解决——
-        换网段之后该重烧还是得重烧。真正的解法是<strong>别在固件里写 IP</strong>：
-        让 ESP32 通过 mDNS 解析 <code>ubuntu.local</code>，
-        地址由 Ubuntu 广播，换任何局域网都能找到。这是下一步要做的。
+        <strong>静态 IP 只是止血，不是根治 —— 而且止血范围比想象的小。</strong>
+        它只解决「同一次会话内地址漂移」。手机热点重启一次，网段和网关就全变，
+        静态地址和固件里的 broker 地址<strong>同时失效</strong>，还是得改代码重烧。<br><br>
+        真正的解法是<strong>别在固件里写 IP</strong>：让 ESP32 用 mDNS 解析
+        <code>ubuntu.local</code>，地址由 Ubuntu 自己广播，换任何局域网都能找到。
+        这是第 5 步之后要做的事。
       </div>
     </div>
 
@@ -691,8 +761,8 @@ sudo bash set_static_ip.sh --dhcp</pre>
     <ol>
       <li>
         <strong>app 分区只剩 13%。</strong>
-        <code>esp32_bridge.bin</code> 约 914 KB，factory 分区 1 MB，
-        剩 <code>0x208e0</code>。下一步加 SNTP + TLS 之前，
+        <code>esp32_bridge.bin</code> 约 896 KB（<code>0xdff20</code>），factory 分区 1 MB，
+        剩 <code>0x200e0</code>。下一步加 SNTP + TLS 之前，
         需要先把 <code>factory</code> 分区调大，否则会链接失败。
       </li>
       <li>
