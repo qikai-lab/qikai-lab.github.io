@@ -1,0 +1,411 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>第 7 周：历史曲线，以及被推翻两次的「串口丢帧」 · ZigBee 环境监测系统</title>
+<meta name="author" content="qikai-lab">
+<link rel="canonical" href="https://qikai-lab.github.io/posts/week7-trend-chart.html">
+<meta property="og:type" content="article">
+<meta property="og:site_name" content="ZigBee 无线环境监测系统 · 开发手记">
+<meta property="og:url" content="https://qikai-lab.github.io/posts/week7-trend-chart.html">
+<meta name="description" content="1 小时 / 24 小时历史曲线：用 SQL 时间桶把 86400 条压成 96 点，断档不补 0，X 轴按真实时间定位而不是数组下标。附带一次翻案：追了两天的「串口只有 0.33 帧/秒」，最后发现是 systemd 服务在后台跑着第二个 gw，两个进程抢同一个 tty。">
+<link rel="stylesheet" href="../assets/css/style.css">
+</head>
+<body>
+
+<header class="site-header">
+  <nav class="nav">
+    <a class="brand" href="../index.html">
+      <span class="brand-mark">QL</span>
+      <span>qikai-lab · 项目手记</span>
+    </a>
+    <div class="nav-links">
+      <a href="../index.html">首页</a>
+      <a href="../index.html#projects">项目</a>
+      <a href="../projects/zigbee-env-monitor.html#logs" class="active">日志</a>
+      <a href="../index.html#about">关于</a>
+    </div>
+  </nav>
+</header>
+
+<main class="wrap">
+
+  <div class="post-header">
+    <div class="breadcrumb"><a href="../index.html">首页</a> / <a href="../projects/zigbee-env-monitor.html">ZigBee 环境监测</a> / 开发日志</div>
+    <h1>第 7 周：历史曲线，以及被推翻两次的「串口丢帧」</h1>
+    <div class="post-meta">
+      <span>2026-10-30</span>
+      <span class="dot">·</span>
+      <span class="tag done">已通过</span>
+      <span class="tag">SQLite</span>
+      <span class="tag">canvas</span>
+      <span class="tag">Linux C</span>
+      <span class="tag">排障复盘</span>
+    </div>
+  </div>
+
+  <article class="prose">
+
+    <p>
+      这一步原本只想做一件很朴素的事：在网页上加一块「历史趋势」，能切 1 小时和 24 小时。
+      前面那些图只画最近 60 条原始帧（约 2 分钟），能看出抖动，看不出走势。
+    </p>
+
+    <p>
+      做完之后发现，真正花时间的不是画图，是<strong>三个「看起来能用、其实是假的」的设计陷阱</strong>，
+      以及一次<strong>把自己前两天的结论整个推翻</strong>的排查。
+      前半段讲曲线怎么做，后半段讲那个翻案。
+    </p>
+
+    <p>
+      服务端改动在
+      <a href="../code/linux_gateway/"><code>code/linux_gateway/</code></a>：
+      聚合查询在 <code>gw_db.c</code> 的 <code>gw_db_trend()</code>，
+      接口在 <code>http_srv.c</code> 的 <code>/api/trend</code>，
+      前端在 <code>web/index.html</code>。
+    </p>
+
+    <h2 id="bucket">一、24 小时不能查 86400 条，得先压成 96 个点</h2>
+
+    <p>
+      第一反应是「加个时间范围参数，把这段时间的原始数据全查出来丢给前端」。
+      算一下就知道不行：24 小时按 1 帧/秒算就是 <strong>86400 条</strong>，一条 JSON 约 110 字节，
+      响应体将近 10MB，而网关的响应缓冲区只有 16KB。
+    </p>
+
+    <p>
+      正确做法是在 SQL 里<strong>按时间分桶聚合</strong>，让返回的点数<strong>固定</strong>，
+      不随窗口长度增长：
+    </p>
+
+    <table>
+      <thead>
+        <tr><th>范围</th><th>桶宽</th><th>点数</th><th>看点</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>1 小时</td><td>30 秒</td><td>120 点</td><td>抖动、掉线缺口</td></tr>
+        <tr><td>6 小时</td><td>180 秒</td><td>120 点</td><td>半天内的起伏</td></tr>
+        <tr><td>24 小时</td><td>900 秒</td><td>96 点</td><td>昼夜温差</td></tr>
+      </tbody>
+    </table>
+
+    <p>核心就一句 SQL：</p>
+
+<pre><span class="dim">/* 桶起点按整数除法对齐，同一个桶里的数据自然聚到一起 */</span>
+SELECT (ts / ?1) * ?1            AS b,
+       COUNT(*)                  AS n,
+       AVG(temp_x10), MIN(temp_x10), MAX(temp_x10),
+       AVG(hum_x10),
+       AVG(lux), AVG(gas), MAX(gas),
+       SUM(pir)
+  FROM env_data
+ WHERE ts &gt;= ?2 AND ts &lt;= ?3 AND (node = ?4 OR ?4 = 0)
+ GROUP BY b
+ ORDER BY b ASC</pre>
+
+    <p>
+      三个字段是刻意留的，不是凑数：
+    </p>
+
+    <ul>
+      <li><code>bucket</code>（桶宽）—— 前端靠它判断「相邻两点间隔多少算正常」；</li>
+      <li><code>n</code>（这桶里有几帧）—— <strong>掉线体检指标</strong>，30 秒桶正常 30 帧，掉到 5 就说明那半分钟串口几乎没数据；</li>
+      <li><code>gmax</code>（桶内最高烟雾）—— 烟雾必须看峰值。烧一张纸只持续 3 秒，在 15 分钟桶里平均下来几乎不变，但峰值会从 23 跳到 300 以上。</li>
+    </ul>
+
+    <div class="callout">
+      <div class="callout-icon">!</div>
+      <div class="callout-body">
+        <strong>AVG 要四舍五入，不能直接强转。</strong>
+        温度是 ×10 定点存的，<code>(int)avg</code> 会把 20.45 截成 20.4，
+        系统性偏低 0.05 度，一百个桶看下来就是一条整体下移的曲线。
+        加 <code>+0.5</code> 再转，单元测试里专门有一项校验这件事。
+      </div>
+    </div>
+
+    <h2 id="nofill">二、中间没数据就少一个桶，绝不补 0</h2>
+
+    <p>
+      查出来「某些桶没有数据」的时候，第一反应通常是补 0 把曲线拉满。
+      这是个陷阱：<strong>补 0 会在曲线上画出一个「温度 0 度 / 光照 0」的深坑</strong>，
+      看图的人以为设备坏了，真相只是那几分钟没有数据。
+    </p>
+
+    <p>
+      所以 <code>gw_db_trend()</code> 只返回<strong>有数据的桶</strong>。
+      缺口不靠数值表达，靠<strong>两个桶之间的时间差</strong>表达。
+      测试用例专门造了一段 300 秒的空白：
+    </p>
+
+<pre><span class="dim">/* 600 秒里只有 300 秒有数据 —— 期望 10 个桶，而不是 20 个 */</span>
+n = gw_db_trend(db, T0, T0 + 599, 30, 0, rows, 128);
+CHECK(n == 10, "600 秒里只有 300 秒有数据 → 10 个桶（不是 20）");
+CHECK(zero == 0, "没有 n=0 的空桶（补 0 会画出假的 0 度）");
+CHECK(maxgap == 300, "最大桶间距 300 秒 —— 前端据此断线");</pre>
+
+    <h2 id="xaxis">三、X 轴按真实时间定位，不按数组下标</h2>
+
+    <p>
+      这是整件事里最不显眼、但影响最大的一条。
+      如果按下标画（第 i 个点放在 <code>i / (n-1)</code> 的位置），
+      <strong>掉线 5 分钟和掉线 5 秒看起来一样宽</strong>——曲线会「假装很连续」。
+    </p>
+
+    <p>
+      而这套系统最该暴露的恰好就是掉线。所以改成按时间戳定位：
+      X 坐标由 <code>(ts - t0) / (t1 - t0)</code> 算出来，同时加一条规则——
+      <strong>相邻两点间隔超过 2.5 倍桶宽，就把线断开</strong>（<code>moveTo</code> 而不是 <code>lineTo</code>）。
+    </p>
+
+<pre><span class="dim">/* 断线而不是拉一条斜线糊过去 */</span>
+var gapLimit = bucket * 2.5;
+for (var i = 0; i &lt; pts.length; i++) {
+  var x = pad.l + iw * (pts[i].t - t0) / (t1 - t0);
+  var y = ...;
+  if (i === 0 || pts[i].t - pts[i-1].t &gt; gapLimit) g.moveTo(x, y);
+  else                                                  g.lineTo(x, y);
+}</pre>
+
+    <h2 id="buffer">四、16KB 缓冲区装不下坐标轴</h2>
+
+    <p>
+      网页 HTML 是直接 <code>memcpy</code> 进响应缓冲区再发的，
+      上限写死在 <code>HTTP_RESP_MAX</code>。加功能之前它是 <strong>16384</strong>，
+      而网页已经占掉 <strong>14739</strong>——只剩 1645 字节，连画坐标轴刻度和悬停气泡的脚本都放不下。
+    </p>
+
+    <p>
+      最后提到 <strong>32768</strong>：网页长到 23784，1 小时趋势接口的响应体实测 <strong>13049 字节</strong>，
+      都放得下。代价是每个客户端槽位一份 <code>resp[]</code>，6 个槽位 × 32KB ≈ 192KB。
+      在 Ubuntu 上毫无压力，但<strong>这个设计不可移植到小 MCU</strong>——
+      真要上单片机，得改成「边生成边发」，不能一口气堆在静态缓冲里。
+    </p>
+
+    <h2 id="reversal">五、翻案：那个「串口只有 0.33 帧/秒」是假的</h2>
+
+    <p>
+      前面几周一直有个悬着的问题：串口那条链路测出来只有 <strong>0.33 帧/秒</strong>，
+      而同期走 WiFi 的 MQTT 链路是 <strong>0.78~1.04 帧/秒</strong>。
+      同样的协调器、同一批帧，一条少三分之二，另一条正常。
+    </p>
+
+    <p>按顺序排查，前三次都排错了方向：</p>
+
+    <table>
+      <thead>
+        <tr><th>#</th><th>假设</th><th>怎么验的</th><th>结果</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>1</td>
+          <td>网关程序读得太慢，漏掉了字节</td>
+          <td>写了个 <code>serial_probe.py</code> 绕开 <code>gw</code>，独占打开串口直接数字节</td>
+          <td>仍然只有 54%。<strong>推翻</strong></td>
+        </tr>
+        <tr>
+          <td>2</td>
+          <td>ESP32 挂在同一个 USB 口上抢带宽</td>
+          <td>A/B 对照：拔掉 ESP32 再测</td>
+          <td>拔掉后反而更低（0.20 vs 0.35）。<strong>推翻</strong></td>
+        </tr>
+        <tr>
+          <td>3</td>
+          <td>CH340 芯片物理掉线</td>
+          <td><code>dmesg</code></td>
+          <td>确实有：<code>usb_submit_urb failed: -19</code>、<code>failed to read modem status: -71</code>、<code>converter now disconnected</code>，20 分钟 6 次</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <p>
+      到第 3 步，结论看起来已经很扎实了：CH340 在反复从 USB 总线上掉下去，
+      每次 1.5~1.8 秒，掉的时候数据就丢了。当时的计划是换线、换口。
+    </p>
+
+    <p>
+      但有个细节对不上：<strong>掉线只占 20 分钟里的 10 秒</strong>，撑死影响 1% 的数据，
+      怎么可能让帧率变成三分之一？
+    </p>
+
+    <p>
+      转折出现在一次很普通的启动失败上。手动跑 <code>./gw</code>，横幅打出：
+    </p>
+
+<pre> 网页   : [启动失败] 端口 8080 可能被占用，采集继续
+[db] 入库失败：insert: database is locked（后续失败不再逐条打印）
+---- 有效帧=0  坏帧=0  残帧=0  重同步=0B  入库=0  库错=3 ----
+---- 有效帧=2  坏帧=0  残帧=0  重同步=0B  入库=0  库错=5 ----</pre>
+
+    <p>
+      <code>库错</code> 每进来一帧就涨一次，说明有另一个进程拿着 <code>gw.db</code> 的写锁。
+      可是 <code>ps -ef | grep gw</code> 是空的。
+    </p>
+
+    <p>那就查文件句柄，不查进程名：</p>
+
+<pre><span class="dim"># 谁开着数据库 —— 这条最准</span>
+$ sudo fuser -v gw.db gw.db-wal gw.db-shm
+                     USER        PID ACCESS COMMAND
+/home/peng/linux_gateway/gw.db:
+                     peng       4083 F.... gw
+
+<span class="dim"># 抓到 PID 之后，看它归谁管</span>
+$ cat /proc/4083/cgroup
+1:name=systemd:/system.slice/zigbee-gw.service
+                    ↑ 到这里就结束了</pre>
+
+    <p>
+      <strong>有个 systemd 服务在后台跑着第二个 <code>gw</code>。</strong>
+      而且它写的是 <code>Restart=always</code> + <code>RestartSec=3</code>——
+      杀掉 3 秒后自动复活，所以你每次 <code>kill</code> 都只是给它换了个 PID：
+      15:01 是 888，16:44 是 4083，16:50 是 4124，都是同一个东西。
+    </p>
+
+    <p>
+      真相到这里就完整了：<strong>两个进程在读同一个 <code>/dev/ttyUSB0</code></strong>。
+      tty 的字节流是被所有读者竞争的，每个进程随机拿到一部分——
+      一块可能是完整帧，也可能是半帧。
+      两边都只能拼出三分之一的完整帧，<strong>所以每条链路看起来都「漏了三分之二」</strong>。
+      MQTT 那条不经过串口，自然不受影响。
+    </p>
+
+    <p>停掉服务、只留一个进程之后，同一套硬件，实测：</p>
+
+<pre>16:55:38  #1   n1  20.6C  42.0%  lux=531(52%)  gas=23  PIR=无人
+16:55:39  #2   n1  20.6C  42.0%  lux=531(52%)  gas=23  PIR=无人
+...
+16:55:59  #21  n1  20.5C  42.0%  lux=532(52%)  gas=23  PIR=无人
+---- 有效帧=21  坏帧=0  残帧=0  重同步=11B  入库=21  库错=0 ----
+
+21 秒 21 帧 = 1.000 帧/秒，坏帧 0</pre>
+
+    <p>
+      <strong>1.000 帧/秒。</strong>之前那个 0.33 不是硬件问题，不是程序问题，
+      是有个看不见的第二实例在分食字节流。
+    </p>
+
+    <div class="callout success">
+      <div class="callout-icon">→</div>
+      <div class="callout-body">
+        <strong>教训不是「要记得关服务」，而是「先数进程，再改代码」。</strong>
+        前面两天所有关于串口、USB 线、供电、ESP32 干扰的假设，
+        在「到底有几个 gw 在跑」这个问题面前都不成立。
+        而这个信息 <code>ps</code> 给不出来——因为服务进程的名字就叫 <code>gw</code>，
+        父进程是 PID 1，看起来像一个正常常驻进程。
+        真正给出答案的是 <code>/proc/&lt;pid&gt;/cgroup</code> 里那行 <code>.service</code>。
+      </div>
+    </div>
+
+    <p>
+      顺带修正了另一样东西：<code>dmesg</code> 里那些 <code>-19 / -71</code> 是<strong>真的</strong>，
+      CH340 确实在偶发掉线。但它只是次要因素，不是三倍差距的原因。
+      把次要原因当成主因，是这个项目里代价最大的一次误判。
+    </p>
+
+    <h2 id="verify">六、验收：230 项断言 + 浏览器里逐项看过</h2>
+
+    <p>
+      服务端加了一组 <code>tests/test_trend.c</code>，32 项断言，覆盖分桶边界、
+      四舍五入、断档不补 0、峰值不被平均抹平、节点过滤、24 小时 96 桶、参数防御。
+      全套离线测试现在是 <strong>230 项</strong>，不需要串口、不需要板子。
+    </p>
+
+    <p>
+      前端没法写单元测试，所以做了个假网关 <code>tools/mock_gw.py</code>，
+      在本地起一个只返回假数据的服务，用真实浏览器打开看：
+    </p>
+
+    <table>
+      <thead>
+        <tr><th>看什么</th><th>预期</th><th>第一版的实际结果</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>左右双 Y 轴</td>
+          <td>左轴标温度、右轴标湿度，数字颜色跟线走</td>
+          <td>✅ 正常</td>
+        </tr>
+        <tr>
+          <td>X 轴时间刻度</td>
+          <td>4 个互不相同的时刻</td>
+          <td>❌ 三个刻度全是 <code>16:20</code>——60 秒窗口按「时分」格式化必然重复。改成按跨度切精度（&lt;180 秒带秒数）</td>
+        </tr>
+        <tr>
+          <td>左下角</td>
+          <td>Y 轴最小刻度和 X 轴标签不重叠</td>
+          <td>❌ 两者糊在一起。底部留白从 17px 加到 26px</td>
+        </tr>
+        <tr>
+          <td>鼠标划过曲线</td>
+          <td>竖线 + 气泡显示该点时间和数值</td>
+          <td>✅ 正常，气泡读到 <code>10-30 15:54:13 / 温度 24.1°C / 湿度 55.9%</code></td>
+        </tr>
+        <tr>
+          <td>掉线缺口</td>
+          <td>线断开，不是拉一条斜线</td>
+          <td>✅ 假数据里挖掉一段，图上真的断在那里</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <h2 id="honest">七、诚实说明：24 小时视图现在画不满</h2>
+
+    <p>
+      库里现有的 4000 多条数据是这几天间歇采集攒下来的，中间有大段空白
+      （机器不是一直开着，传感器也不能连着跑一整天）。
+      所以 24 小时视图现在是一条<strong>断续的线</strong>，不是满格。
+    </p>
+
+    <p>
+      这不是 bug，恰恰是「断档不补 0」在起作用——
+      <strong>系统不会用一条直线把没有数据的时间糊过去，它会把缺口如实画出来</strong>。
+      等哪天连续跑满一天，它自然就是连续的一条。
+    </p>
+
+    <h2 id="next">八、还剩什么</h2>
+
+    <ol>
+      <li>
+        <strong>低功耗与电池续航实测</strong>——需要万用表量电流、拆掉 USB 供电，
+        当前硬件条件不够，暂时挂起。这一项不影响主链路。
+      </li>
+      <li>
+        <strong>长时间稳定性</strong>——需要连续跑 24 小时以上。
+        同样受硬件条件限制，放到最后。
+      </li>
+      <li>
+        <strong>趋势图的视觉细节</strong>——光照（左轴 38~64）和烟雾（右轴 4~30）
+        在数值接近时两条线会贴在一起，看起来像少画了一条。
+        数据巧合，改量程或加虚线都能解决，优先级不高。
+      </li>
+    </ol>
+
+    <div class="callout success">
+      <div class="callout-icon">→</div>
+      <div class="callout-body">
+        <strong>到这一步，主链路是完整闭环了。</strong>
+        采集 → 组网 → 落库 → 网页 → 告警 → 上云 → 远控 → 历史趋势。
+        从一块 CC2530 到 Linux 上跑着的 C 服务端，每一段都自己写过、断过、修过。
+        剩下的都是「有条件才做」的加分项，不影响这套系统能不能跑。
+      </div>
+    </div>
+
+    <div class="post-footer">
+      <a class="btn" href="week6-relay-remote.html">← 第 6 周：远控继电器</a>
+      <a class="btn btn-primary" href="../code/linux_gateway/">看服务端源码 →</a>
+    </div>
+
+  </article>
+
+</main>
+
+<footer class="site-footer">
+  <div class="wrap-wide">
+    <span>qikai-lab · 项目手记 — ZigBee 无线环境监测系统</span>
+    <span>最近更新：2026-10-30</span>
+  </div>
+</footer>
+
+</body>
+</html>

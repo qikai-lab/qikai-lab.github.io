@@ -78,6 +78,24 @@
 
     <div class="post-list">
 
+      <a class="post-card" href="../posts/week7-trend-chart.html">
+        <div class="post-card-top">
+          <span class="post-date">2026-10-30</span>
+          <span class="tag done">已通过</span>
+          <span class="tag">SQLite</span>
+          <span class="tag">canvas</span>
+          <span class="tag">排障复盘</span>
+        </div>
+        <h3>第 7 周：历史曲线，以及被推翻两次的「串口丢帧」</h3>
+        <p>
+          1 小时 / 24 小时曲线：用 SQL 时间桶把 86400 条压成 96 个点，断档不补 0，
+          X 轴按真实时间定位。三个设计陷阱各踩了一遍——补 0 会画出假的「温度 0 度」、
+          按下标画会让掉线 5 分钟和 5 秒看起来一样宽、16KB 缓冲区装不下坐标轴。
+          附带一次翻案：追了两天的「串口只有 0.33 帧/秒」，最后发现是 systemd 服务
+          在后台跑着第二个网关，两个进程抢同一个 tty 的字节流。
+        </p>
+      </a>
+
       <a class="post-card" href="../posts/week6-relay-remote.html">
         <div class="post-card-top">
           <span class="post-date">2026-10-28</span>
@@ -268,7 +286,7 @@
 <footer class="site-footer">
   <div class="wrap-wide">
     <span>qikai-lab · 项目手记 — ZigBee 无线环境监测系统</span>
-    <span>最近更新：2026-10-28</span>
+    <span>最近更新：2026-10-30</span>
   </div>
 </footer>
 
