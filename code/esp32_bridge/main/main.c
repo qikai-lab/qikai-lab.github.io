@@ -87,9 +87,13 @@ static void on_frame(const uint8_t *f, void *user)
 }
 
 /* ------------------------------ 下行命令 ------------------------------ */
-/* 把一个字节命令从 UART1 的 TX（GPIO17）发给协调器的 P0_4。
+/* 把一个字节命令从 UART1 的 TX（GPIO17）发给协调器的 P0_5。
  *
- * 协调器把 P0_4 配成 UART1 的 RX（Alt2 映射），收到后原样转成 ZigBee 广播
+ * ⚠️ 是 P0_5，不是 P0_4。协调器的 UART1 在「备用位置 1」(PERCFG.U1CFG=0) 下是
+ *    RX = P0_5（高脚）/ TX = P0_4（低脚），和 UART0 的「低脚收」正好相反。
+ *    把 ESP32 的 TX 接到 P0_4 等于接到协调器自己的 TX 脚上，一个字节都收不到。
+ *
+ * 协调器收到后原样转成 ZigBee 单播（带 AF_ACK_REQUEST + 隔 200ms 重发 5 次），
  * 发给终端节点，终端再按字节拆出"节点号/设备/命令"驱动继电器。
  * 也就是说 ESP32 只是个搬运工，**不理解命令含义**，这样以后加蜂鸣器、
  * 照明灯都不用改这里的代码。
@@ -99,7 +103,7 @@ void bridge_send_cmd(uint8_t cmd)
 {
     uart_write_bytes(APP_UART_PORT, (const char *)&cmd, 1);
     (void)uart_wait_tx_done(APP_UART_PORT, pdMS_TO_TICKS(50));
-    ESP_LOGI(TAG, "[下发] 0x%02X → 协调器 P0_4", (unsigned)cmd);
+    ESP_LOGI(TAG, "[下发] 0x%02X → 协调器 P0_5", (unsigned)cmd);
 }
 
 /* ------------------------------ 串口初始化 ------------------------------ */
