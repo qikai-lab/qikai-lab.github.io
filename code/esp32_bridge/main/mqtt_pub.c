@@ -31,12 +31,17 @@
 
 static const char *TAG = "MQTT";
 
+/* 由 main.c 提供：把一字节命令从 UART1 发给协调器。
+ * 这里只负责"把 MQTT 消息翻译成命令字"，不碰串口细节。 */
+void bridge_send_cmd(uint8_t cmd);
+
 static esp_mqtt_client_handle_t s_client   = NULL;
 static volatile bool            s_connected = false;
 
 /* 主题串在启动时按节点号生成一次，不在每帧里反复 snprintf */
 static char s_topic_env[64];
 static char s_topic_status[64];
+static char s_topic_cmd[64];
 
 static volatile uint32_t s_ok      = 0;
 static volatile uint32_t s_dropped = 0;
@@ -56,11 +61,35 @@ static void mqtt_event_handler(void *arg, esp_event_base_t base,
         ESP_LOGI(TAG, "============================================");
         ESP_LOGI(TAG, " MQTT 已连接  broker=%s", APP_MQTT_URI);
         ESP_LOGI(TAG, " 发布主题: %s  (QoS%d)", s_topic_env, APP_MQTT_QOS);
+        ESP_LOGI(TAG, " 命令主题: %s  (QoS1)", s_topic_cmd);
         ESP_LOGI(TAG, "============================================");
 
         /* 上线通告：retain=1，让后订阅的人立刻知道设备活着 */
         esp_mqtt_client_publish(s_client, s_topic_status,
                                 APP_STATUS_ONLINE, 0, 1, 1);
+
+        /* 订阅命令主题。放在 CONNECTED 里而不是启动时：断线重连后
+         * 会话就没了，只有在这里重新订阅才保证一直收得到。
+         * QoS1 —— 宁可重复收（命令是幂等的，开就是开），不能漏。 */
+        esp_mqtt_client_subscribe(s_client, s_topic_cmd, 1);
+        break;
+
+    case MQTT_EVENT_DATA:
+        /* 只订阅了一个主题，所以不比对 topic 也能确定来源。
+         * ev->data 不以 '\0' 结尾，长度必须看 data_len，不能当字符串用。 */
+        if (ev->data_len < 1) {
+            break;
+        }
+        ESP_LOGI(TAG, "[收到命令] payload='%.*s' (%d 字节)",
+                 ev->data_len, ev->data, ev->data_len);
+
+        if (ev->data[0] == '1') {
+            bridge_send_cmd(0x41);      /* 节点1 · 继电器 · 吸合 */
+        } else if (ev->data[0] == '0') {
+            bridge_send_cmd(0x40);      /* 节点1 · 继电器 · 断开 */
+        } else {
+            ESP_LOGW(TAG, "  只认 '1'(开) 和 '0'(关)，这条忽略");
+        }
         break;
 
     case MQTT_EVENT_DISCONNECTED:
@@ -102,6 +131,7 @@ int mqtt_pub_start(void)
 
     snprintf(s_topic_env,    sizeof(s_topic_env),    APP_TOPIC_ENV,    APP_NODE_ID);
     snprintf(s_topic_status, sizeof(s_topic_status), APP_TOPIC_STATUS, APP_NODE_ID);
+    snprintf(s_topic_cmd,    sizeof(s_topic_cmd),    APP_TOPIC_CMD,    APP_NODE_ID);
 
     esp_mqtt_client_config_t cfg = { 0 };
     cfg.broker.address.uri = APP_MQTT_URI;

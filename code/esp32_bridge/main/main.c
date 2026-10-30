@@ -34,6 +34,7 @@
 
 #include "app_cfg.h"
 #include "mqtt_pub.h"
+#include "oled_status.h"
 #include "wifi_mgr.h"
 #include "zigbee_frame.h"
 
@@ -41,6 +42,12 @@ static const char *TAG = "BRIDGE";
 
 static zb_parser_t s_parser;
 static uint32_t    s_bytes;         /* 串口收到的原始字节数 */
+
+/* 最新一帧的原始 24 字节，给 OLED 显示用。
+ * zb_parser_feed() 在 rx_task 里调用，读也在 rx_task 里，同一个任务上下文，
+ * 所以不需要加锁。（OLED 是纯展示，晚 100ms 显示旧值也不影响任何判断） */
+static uint8_t s_last[24];
+static bool    s_have_last;
 
 /* 把一帧打出来，并顺手发布到 MQTT */
 static void on_frame(const uint8_t *f, void *user)
@@ -71,8 +78,28 @@ static void on_frame(const uint8_t *f, void *user)
              zb_pir(f)   ? "有人" : "无人",
              zb_relay(f) ? "ON"   : "OFF");
 
+    /* 拷贝而不是存指针：解析器复用的是同一块内部缓冲区，下一帧会把它覆盖掉 */
+    memcpy(s_last, f, sizeof(s_last));
+    s_have_last = true;
+
     /* 发布。失败（未连接/队列满）由 mqtt_pub 内部计数，这里不打断采集 */
     mqtt_pub_env(f);
+}
+
+/* ------------------------------ 下行命令 ------------------------------ */
+/* 把一个字节命令从 UART1 的 TX（GPIO17）发给协调器的 P0_4。
+ *
+ * 协调器把 P0_4 配成 UART1 的 RX（Alt2 映射），收到后原样转成 ZigBee 广播
+ * 发给终端节点，终端再按字节拆出"节点号/设备/命令"驱动继电器。
+ * 也就是说 ESP32 只是个搬运工，**不理解命令含义**，这样以后加蜂鸣器、
+ * 照明灯都不用改这里的代码。
+ *
+ * 由 mqtt_pub.c 在收到订阅消息时调用（那边用 extern 声明，省得再加一层回调接口）。 */
+void bridge_send_cmd(uint8_t cmd)
+{
+    uart_write_bytes(APP_UART_PORT, (const char *)&cmd, 1);
+    (void)uart_wait_tx_done(APP_UART_PORT, pdMS_TO_TICKS(50));
+    ESP_LOGI(TAG, "[下发] 0x%02X → 协调器 P0_4", (unsigned)cmd);
 }
 
 /* ------------------------------ 串口初始化 ------------------------------ */
@@ -157,6 +184,35 @@ static void rx_task(void *arg)
             silent_round = 0;
         }
         last_bytes = s_bytes;
+
+        /* ---- OLED 状态屏 ----
+         * 放在这个 100ms 循环里，等于天然按 100ms 的节奏被问到，节流交给
+         * oled_status_due() 管（默认 500ms 一刷）。
+         * 屏没接 / 线松时 oled_status_render() 直接返回，不会拖住收帧。 */
+        if (oled_status_due()) {
+            oled_info_t oi;
+
+            memset(&oi, 0, sizeof(oi));
+            oi.wifi_ok = wifi_mgr_is_connected();
+            oi.ip      = wifi_mgr_ip();
+            oi.rssi    = wifi_mgr_rssi();
+            oi.mqtt_ok = mqtt_pub_is_connected();
+            oi.tx_ok   = mqtt_pub_ok_count();
+            oi.dropped = mqtt_pub_dropped_count();
+            oi.frames  = s_parser.frames;
+            oi.bad     = s_parser.bad;
+
+            if (s_have_last) {
+                oi.node     = zb_node(s_last);
+                oi.temp_x10 = zb_temp_x10(s_last);
+                oi.hum_x10  = zb_humi_x10(s_last);
+                oi.lux      = zb_lux(s_last);
+                oi.gas      = zb_gas(s_last);
+                oi.pir      = zb_pir(s_last);
+                oi.relay    = zb_relay(s_last);
+            }
+            oled_status_render(&oi);
+        }
     }
 }
 
@@ -216,8 +272,17 @@ void app_main(void)
     /* 先起串口：网络初始化可能要几秒，这段时间的数据不能丢 */
     bridge_uart_init();
 
-    /* 接收任务优先级 5，先跑起来 */
-    xTaskCreate(rx_task, "rx_task", 4096, NULL, 5, NULL);
+    /* 状态屏。**失败不算错误**：没接屏、线松、地址不对都只是少一个显示，
+     * 采集/上云/远控一条都不受影响，所以这里只警告不 return。 */
+    if (oled_status_init() != 0) {
+        ESP_LOGW(TAG, "没有 OLED 状态屏 —— 串口日志照常，所有功能不受影响");
+    }
+
+    /* 接收任务优先级 5，先跑起来。
+     * 栈给 6144（原来是 4096）：这个任务现在还兼着刷 OLED，
+     * snprintf + I2C 驱动会吃几百字节栈，4096 太贴着上限，
+     * 栈溢出是随机崩溃，很难查，多给 2KB 便宜。 */
+    xTaskCreate(rx_task, "rx_task", 6144, NULL, 5, NULL);
 
     /* 网络的失败不影响采集，所以这里只告警不退出 */
     if (wifi_mgr_start() != 0) {

@@ -1,0 +1,20 @@
+﻿# Name,   Type, SubType, Offset,   Size,     Flags
+# ===========================================================================
+# ESP32-S3-WROOM-1 N16R8 · 16MB Flash · 单 app 分区表（不做 OTA）
+#
+# 为什么要自定义而不是用默认的 partitions_singleapp.csv：
+#   默认表只给 factory 1MB（0x100000）。加上 OLED 驱动后固件已经 916KB，
+#   只剩 107KB 余量，随便再动一点就装不下，而芯片实际有 16MB。
+#   这里把 factory 扩到 1.5MB，用掉 1.06MB → 1.56MB，还剩 14.4MB 闲置。
+#
+# app 起始偏移仍然是 0x10000，和默认表一致 —— 所以：
+#   · nvs（0x9000）不会被移动，射频校准数据不动
+#   · WiFi 账号密码在 app_cfg.h 里（编译进固件），本来就不在 NVS
+#   · 烧这张表不需要 idf.py erase-flash
+#
+# 将来如果要做 OTA，把 factory 换成 app0/app1 各 1.5MB + otadata 即可，
+# 16MB 空间绰绰有余，不用再改这块。
+# ===========================================================================
+nvs,      data, nvs,     0x9000,   0x6000,
+phy_init, data, phy,     0xf000,   0x1000,
+factory,  app,  factory, 0x10000,  0x180000,

@@ -1,10 +1,10 @@
 # 源码
 
-这里只放**完全由我本人从头编写**的那一层：Linux 网关服务端（项目第 3 步）
-与 ESP32 网关固件（项目第 4 步）。
+这里只放**完全由我本人从头编写**的那几层：Linux 网关服务端（第 3~6 步）
+与 ESP32 网关固件（第 4、5 步）。
 
-- `linux_gateway/` — 串口 → 解析 → SQLite → 网页，纯 C，无第三方框架
-- `esp32_bridge/` — 协调器 UART → WiFi/MQTT，ESP-IDF v5.5
+- `linux_gateway/` — 串口 → 解析 → SQLite → 网页 → 告警 → 历史曲线，纯 C，无第三方框架
+- `esp32_bridge/` — 协调器 UART ⇄ WiFi/MQTT，ESP-IDF v5.5
 
 ## 为什么只有这一层
 
@@ -46,9 +46,12 @@ CC2530 那一层的工程骨架和 Z-Stack 协议栈示例来自课程材料，�
 
 - `main.c` — epoll 统一事件循环、`signalfd` 把信号转成 fd、串口每秒重连
 - `gw_frame.c` — 24 字节定长帧的状态机解析，含半帧、垃圾前缀、假帧头处理
-- `gw_db.c` — WAL 模式 + 批量事务 + 预处理语句，以及「实时数据为什么不查库」
+- `gw_db.c` — WAL 模式 + 批量事务 + 预处理语句，以及「实时数据为什么不查库」；
+  `gw_db_trend()` 做 SQL 时间桶聚合（1h→30s 桶、24h→900s 桶，点数固定）
 - `gw_filter.c` / `gw_alarm.c` — 中值滤波、自适应基线、迟滞状态机
-- `http_srv.c` — 从零实现的 HTTP/1.1 响应构造，含 `Content-Length` 一致性
+- `http_srv.c` — 从零实现的 HTTP/1.1 响应构造，含 `Content-Length` 一致性、
+  `/api/trend` 的范围解析与分桶
+- `gw_cmd.c` — 手写 MQTT 报文（不依赖 libmosquitto），把网页按钮变成一条 `publish`
 
 ## 编译与运行
 
@@ -56,8 +59,8 @@ CC2530 那一层的工程骨架和 Z-Stack 协议栈示例来自课程材料，�
 # 依赖：gcc + libsqlite3-dev
 sudo apt install build-essential libsqlite3-dev
 
-make                # 出 gw 一个可执行文件
-make test           # 178 项离线断言，不需要任何硬件
+make                # 出 gw（+ mqtt_sub）可执行文件
+make test           # 230 项离线断言，不需要任何硬件
 sudo ./gw -d /dev/ttyUSB0 -p 8080
 ```
 
@@ -83,10 +86,13 @@ sudo bash install_service.sh /dev/ttyUSB0 8080
 | 文件 | 覆盖 | 项数 |
 | --- | --- | --- |
 | `tests/test_parse.c` | 帧解析 + 落库，含逐字节喂入、断帧、假帧头、真实串口抓包 | 50 |
-| `tests/test_recent.c` | 历史查询分页、节点过滤、告警表 begin/end、上电清理未收尾告警 | — |
+| `tests/test_recent.c` | 历史查询分页、节点过滤、告警表 begin/end、上电清理未收尾告警 | 31 |
+| `tests/test_trend.c` | 时间桶聚合：分桶边界、四舍五入、断档不补 0、峰值保留、节点过滤 | 32 |
 | `tests/test_filter.c` | 中值滤波、自适应基线收敛、告警迟滞与死区 | 36 |
-| `tests/test_http.c` | 各接口响应体与 `Content-Length` 一致性、404、空库 | 13 组 |
-| `tests/test_chain.c` | 串口字节 → 解析 → 滤波 → 告警 → 落库 的端到端串联 | 6 组 |
+| `tests/test_http.c` | 各接口响应体与 `Content-Length` 一致性、404、空库 | 38 |
+| `tests/test_chain.c` | 串口字节 → 解析 → 滤波 → 告警 → 落库 的端到端串联 | 23 |
+| `tests/test_cmd.c` | MQTT CONNECT / PUBLISH 报文逐字节断言（不需要 broker） | 20 |
+| **合计** | 不需要串口、不需要板子、不需要 broker | **230** |
 
 `test_parse` 里那 208 字节真实串口抓包是最有价值的用例：
 它同时包含 5 个完整帧和 8 个残缺帧，能验证解析器在真实丢字节的情况下不会乱。
