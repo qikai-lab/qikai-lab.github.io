@@ -1,0 +1,191 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>项目 · qikai-lab</title>
+<meta name="author" content="qikai-lab">
+<link rel="canonical" href="https://qikai-lab.github.io/projects/">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="qikai-lab">
+<meta property="og:url" content="https://qikai-lab.github.io/projects/">
+<meta name="description" content="qikai-lab 做过的项目：按物联网、嵌入式、工具分类。每个项目有独立的介绍页，含架构、硬件清单、连线图、演示视频与验收数据。">
+<link rel="stylesheet" href="../assets/css/style.css">
+</head>
+<body>
+
+<header class="site-header">
+  <nav class="nav">
+    <a class="brand" href="../index.html">
+      <span class="brand-mark">QL</span>
+      <span>qikai-lab</span>
+    </a>
+    <div class="nav-links">
+      <a href="../index.html">首页</a>
+      <a href="index.html" class="active">项目</a>
+      <a href="../posts/">手记</a>
+      <a href="../index.html#about">关于</a>
+    </div>
+  </nav>
+</header>
+
+<main>
+
+  <section class="page-head">
+    <div class="wrap-wide">
+      <a class="crumb" href="../index.html">← 返回首页</a>
+      <h1>项目</h1>
+      <p>
+        每个项目一个独立页面：先讲清楚它是什么、长什么样、怎么接线、怎么验证，
+        再往下才是按时间写的开发手记。分类留给以后——现在只有一类，但结构先摆好。
+      </p>
+    </div>
+  </section>
+
+  <div class="wrap-wide">
+
+    <div class="section-head">
+      <h2>全部项目</h2>
+      <span id="count-label">1 个进行中 · 1 个筹备中</span>
+    </div>
+
+    <div class="filter-bar" id="filter-bar">
+      <button class="filter-btn active" data-cat="all">全部</button>
+      <button class="filter-btn" data-cat="iot">物联网</button>
+      <button class="filter-btn" data-cat="embedded">嵌入式</button>
+      <button class="filter-btn" data-cat="tool">工具 / Web</button>
+      <button class="filter-btn" data-cat="note">笔记 / 方法</button>
+    </div>
+
+    <div class="project-grid" id="project-grid">
+
+      <a class="project-card" href="zigbee-env-monitor.html" data-cat="iot embedded">
+        <div class="project-cover">
+          <img src="../assets/img/trend-page-trend.png" alt="网页上的历史曲线：双 Y 轴与点选读数">
+        </div>
+        <div class="project-body">
+          <div class="post-card-top">
+            <span class="tag done">已定版 v1.0</span>
+            <span class="tag">物联网</span>
+            <span class="tag">嵌入式</span>
+          </div>
+          <h3>ZigBee 无线环境监测系统</h3>
+          <p>
+            电池节点采温湿度 / 烟雾 / 光照 / 人体 → ZigBee 协调器 → 两条并行链路：
+            一路串口进 Linux 网关（落库、曲线、告警、网页远控），
+            一路 ESP32-S3 转 MQTT 上云。四层全部自己写，含 230 项离线断言。
+          </p>
+          <div class="project-meta">
+            <span>2026-10-22 → 10-30</span>
+            <span>·</span>
+            <span>10 篇手记</span>
+            <span>·</span>
+            <span>串口实测 1.000 帧/秒</span>
+          </div>
+        </div>
+      </a>
+
+      <div class="project-card" style="cursor:default">
+        <div class="project-cover is-empty">
+          <span style="font-size:12.5px;color:var(--text-mute);text-align:center;line-height:1.7">还没<br>开工</span>
+        </div>
+        <div class="project-body">
+          <div class="post-card-top">
+            <span class="tag">筹备中</span>
+          </div>
+          <h3>下一个项目</h3>
+          <p>
+            没动手的就不列进来。写了「即将开始的宏伟项目」却停在第一行，
+            比空着更难看。
+          </p>
+          <div class="project-meta">
+            <span>方向未定</span>
+          </div>
+        </div>
+      </div>
+
+    </div>
+
+    <!-- ==================== 分类说明 ==================== -->
+    <div class="section-head">
+      <h2>分类怎么用</h2>
+      <span>给以后的自己看的规则</span>
+    </div>
+
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>分类</th>
+            <th>放什么</th>
+            <th>什么不算</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><strong>物联网</strong></td>
+            <td>有设备、有网络、有服务端，完整跑通一条链路的项目</td>
+            <td>只做了个传感器读数demo的不算</td>
+          </tr>
+          <tr>
+            <td><strong>嵌入式</strong></td>
+            <td>裸机驱动、协议栈、固件这类靠近硬件的东西</td>
+            <td>只在开发板上点灯的不算</td>
+          </tr>
+          <tr>
+            <td><strong>工具 / Web</strong></td>
+            <td>解决自己一个具体麻烦的脚本、页面、小工具</td>
+            <td>为了学框架而写的脚手架不算</td>
+          </tr>
+          <tr>
+            <td><strong>笔记 / 方法</strong></td>
+            <td>踩过的坑整理成的可复用方法，不是知识搬运</td>
+            <td>抄文档的不算</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+  </div>
+
+</main>
+
+<footer class="site-footer">
+  <div class="wrap-wide">
+    <span>qikai-lab · 嵌入式与物联网</span>
+    <span>最近更新：2026-10-30</span>
+  </div>
+</footer>
+
+<script>
+(function () {
+  var bar = document.getElementById('filter-bar');
+  var grid = document.getElementById('project-grid');
+  var label = document.getElementById('count-label');
+  var cards = [].slice.call(grid.querySelectorAll('.project-card'));
+
+  bar.addEventListener('click', function (e) {
+    var btn = e.target.closest('.filter-btn');
+    if (!btn) return;
+
+    [].forEach.call(bar.querySelectorAll('.filter-btn'), function (b) {
+      b.classList.toggle('active', b === btn);
+    });
+
+    var cat = btn.dataset.cat;
+    var shown = 0;
+    cards.forEach(function (c) {
+      var hit = cat === 'all' || (c.dataset.cat || '').split(/\s+/).indexOf(cat) >= 0;
+      c.style.display = hit ? '' : 'none';
+      if (hit) shown++;
+    });
+
+    label.textContent = cat === 'all'
+      ? '1 个进行中 · 1 个筹备中'
+      : '筛选出 ' + shown + ' 个';
+  });
+})();
+</script>
+
+</body>
+</html>

@@ -722,3 +722,508 @@ figcaption {
 @media (prefers-reduced-motion: reduce) {
   * { transition: none !important; scroll-behavior: auto !important; }
 }
+
+/* ==========================================================================
+   个人主页 / 项目分层 / 媒体区（2026-10-30 站点重构新增）
+   沿用上面的 teal + indigo 设计系统，不引入新配色。
+   ========================================================================== */
+
+/* ---------------------------------------------------------------- 个人主页 */
+
+.profile-hero {
+  padding: 62px 0 50px;
+  border-bottom: 1px solid var(--border-soft);
+  background:
+    radial-gradient(760px 320px at 8% -12%, rgba(13, 148, 136, .11), transparent 62%),
+    radial-gradient(620px 280px at 92% -4%, rgba(79, 70, 229, .09), transparent 60%);
+}
+
+.profile-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 322px;
+  gap: 46px;
+  align-items: start;
+}
+
+.profile-id {
+  display: flex;
+  align-items: center;
+  gap: 15px;
+  margin-bottom: 22px;
+}
+
+.avatar {
+  width: 58px;
+  height: 58px;
+  border-radius: 17px;
+  background: linear-gradient(135deg, #0d9488, #4f46e5);
+  color: #fff;
+  font-size: 19px;
+  font-weight: 800;
+  letter-spacing: .02em;
+  display: grid;
+  place-items: center;
+  flex: none;
+  box-shadow: var(--shadow-md);
+}
+
+.profile-name {
+  font-size: 20px;
+  font-weight: 750;
+  letter-spacing: -.015em;
+  line-height: 1.3;
+}
+
+.profile-role {
+  font-size: 13.5px;
+  color: var(--text-mute);
+  margin-top: 3px;
+}
+
+.profile-lede {
+  font-size: 16.5px;
+  color: var(--text-soft);
+  margin: 0 0 20px;
+  max-width: 600px;
+}
+
+.profile-lede strong { color: var(--text); font-weight: 700; }
+
+.profile-actions {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-top: 26px;
+}
+
+.profile-side {
+  background: #fff;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 22px 24px;
+  box-shadow: var(--shadow-sm);
+}
+
+.side-title {
+  font-size: 11.5px;
+  letter-spacing: .1em;
+  text-transform: uppercase;
+  color: var(--text-mute);
+  font-weight: 650;
+  margin: 0 0 10px;
+}
+
+.side-title + .side-title { margin-top: 22px; }
+
+.info-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 14px;
+  font-size: 13.5px;
+  padding: 7px 0;
+  border-bottom: 1px dashed var(--border-soft);
+}
+
+.info-row:last-child { border-bottom: 0; }
+.info-row .k { color: var(--text-mute); flex: none; }
+.info-row .v { color: var(--text); font-weight: 500; text-align: right; }
+
+/* ---------------------------------------------------------------- 技能分组 */
+
+.skill-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(232px, 1fr));
+  gap: 14px;
+}
+
+.skill-card {
+  background: #fff;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 18px 20px;
+  transition: border-color .18s, box-shadow .18s;
+}
+
+.skill-card:hover {
+  border-color: #99f6e4;
+  box-shadow: var(--shadow-sm);
+}
+
+.skill-card h3 {
+  font-size: 14.5px;
+  font-weight: 700;
+  margin: 0 0 4px;
+  letter-spacing: -.01em;
+}
+
+.skill-card p {
+  font-size: 12.5px;
+  color: var(--text-mute);
+  margin: 0 0 12px;
+  line-height: 1.6;
+}
+
+.chip-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.chip {
+  font-size: 11.5px;
+  font-family: var(--font-mono);
+  padding: 3px 9px;
+  border-radius: 6px;
+  background: var(--bg-soft);
+  border: 1px solid var(--border);
+  color: var(--text-soft);
+  white-space: nowrap;
+}
+
+/* ------------------------------------------------------------ 分类筛选栏 */
+
+.filter-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 0 0 20px;
+}
+
+.filter-btn {
+  font-size: 13px;
+  font-family: inherit;
+  padding: 6px 15px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: #fff;
+  color: var(--text-soft);
+  cursor: pointer;
+  transition: all .15s;
+}
+
+.filter-btn:hover {
+  border-color: #99f6e4;
+  color: var(--accent-dark);
+}
+
+.filter-btn.active {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+
+/* ---------------------------------------------------------------- 项目卡片 */
+
+.project-grid {
+  display: grid;
+  gap: 16px;
+}
+
+.project-card {
+  display: grid;
+  grid-template-columns: 206px minmax(0, 1fr);
+  background: #fff;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+  text-decoration: none;
+  color: inherit;
+  transition: border-color .18s, box-shadow .18s, transform .18s;
+}
+
+.project-card:hover {
+  border-color: #99f6e4;
+  box-shadow: var(--shadow-md);
+  transform: translateY(-2px);
+}
+
+.project-cover {
+  background: var(--bg-soft);
+  border-right: 1px solid var(--border);
+  display: grid;
+  place-items: center;
+  padding: 0;
+  overflow: hidden;
+  min-height: 158px;
+}
+
+.project-cover img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+/* 占位卡没有封面图，留出内边距 */
+.project-cover.is-empty { padding: 16px; }
+
+.project-body { padding: 20px 24px; }
+
+.project-body h3 {
+  font-size: 18.5px;
+  font-weight: 700;
+  margin: 0 0 8px;
+  letter-spacing: -.012em;
+  line-height: 1.4;
+}
+
+.project-body p {
+  margin: 0 0 12px;
+  font-size: 14px;
+  color: var(--text-soft);
+  line-height: 1.68;
+}
+
+.project-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+  font-size: 12.5px;
+  color: var(--text-mute);
+  font-family: var(--font-mono);
+}
+
+/* ---------------------------------------------------------------- 内页标题 */
+
+.page-head {
+  padding: 50px 0 34px;
+  border-bottom: 1px solid var(--border-soft);
+  background:
+    radial-gradient(680px 280px at 10% -20%, rgba(13, 148, 136, .09), transparent 62%);
+}
+
+.page-head h1 {
+  font-size: 33px;
+  font-weight: 800;
+  letter-spacing: -.022em;
+  line-height: 1.28;
+  margin: 12px 0 12px;
+}
+
+.page-head p {
+  font-size: 16px;
+  color: var(--text-soft);
+  max-width: 680px;
+  margin: 0;
+}
+
+.crumb {
+  font-size: 13px;
+  color: var(--text-mute);
+  text-decoration: none;
+}
+
+.crumb:hover { color: var(--accent); }
+
+/* ------------------------------------------------------------ 图片 / 视频 */
+
+.media-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(268px, 1fr));
+  gap: 16px;
+}
+
+.figure {
+  margin: 0;
+  background: #fff;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+
+.figure img {
+  width: 100%;
+  display: block;
+  background: var(--bg-soft);
+  max-height: 400px;
+  object-fit: contain;
+}
+
+.figure figcaption {
+  padding: 10px 14px;
+  font-size: 12.5px;
+  color: var(--text-mute);
+  border-top: 1px solid var(--border-soft);
+  line-height: 1.6;
+}
+
+.video-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  gap: 18px;
+  align-items: start;
+}
+
+.video-card {
+  background: #fff;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+
+/* 统一 16:9 视口：横屏视频铺满，竖屏视频左右留黑边，三张卡高度一致 */
+.video-card video {
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  object-fit: contain;
+  background: #0f172a;
+  display: block;
+}
+
+.video-card .video-cap {
+  padding: 12px 16px;
+  border-top: 1px solid var(--border-soft);
+}
+
+.video-card .video-cap strong {
+  display: block;
+  font-size: 14px;
+  font-weight: 650;
+  margin-bottom: 3px;
+}
+
+.video-card .video-cap span {
+  font-size: 12.5px;
+  color: var(--text-mute);
+}
+
+/* -------------------------------------------------------------- 连线图容器 */
+
+.diagram-box {
+  background: #fff;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 24px 22px;
+  overflow-x: auto;
+}
+
+.diagram-box svg {
+  display: block;
+  min-width: 660px;
+  margin: 0 auto;
+}
+
+.diagram-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 18px;
+  margin-top: 14px;
+  font-size: 13px;
+  color: var(--text-soft);
+}
+
+.diagram-legend i {
+  display: inline-block;
+  width: 22px;
+  height: 0;
+  border-top-width: 2px;
+  border-top-style: solid;
+  vertical-align: middle;
+  margin-right: 7px;
+}
+
+/* -------------------------------------------------------------- 数据一览 */
+
+.spec-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(164px, 1fr));
+  gap: 12px;
+}
+
+.spec {
+  background: #fff;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 15px 17px;
+}
+
+.spec-num {
+  font-size: 21px;
+  font-weight: 800;
+  font-family: var(--font-mono);
+  color: var(--accent-dark);
+  letter-spacing: -.02em;
+  line-height: 1.2;
+}
+
+.spec-label {
+  font-size: 12px;
+  color: var(--text-mute);
+  margin-top: 3px;
+}
+
+/* ------------------------------------------------------------ 手记索引列表 */
+
+.log-list {
+  border-top: 1px solid var(--border);
+}
+
+.log-item {
+  display: grid;
+  grid-template-columns: 92px minmax(0, 1fr) 54px;
+  gap: 18px;
+  align-items: baseline;
+  padding: 15px 6px;
+  border-bottom: 1px solid var(--border-soft);
+  text-decoration: none;
+  color: inherit;
+  transition: background .15s;
+}
+
+.log-item:hover { background: var(--bg-soft); }
+
+.log-when {
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+  color: var(--text-mute);
+  white-space: nowrap;
+}
+
+.log-title {
+  display: block;
+  font-size: 15.5px;
+  font-weight: 600;
+  letter-spacing: -.01em;
+  margin-bottom: 3px;
+  line-height: 1.5;
+}
+
+.log-item:hover .log-title { color: var(--accent-dark); }
+
+.log-desc {
+  display: block;
+  font-size: 13px;
+  color: var(--text-soft);
+  line-height: 1.6;
+}
+
+.log-go {
+  font-size: 12.5px;
+  color: var(--text-mute);
+  text-align: right;
+  white-space: nowrap;
+}
+
+@media (max-width: 640px) {
+  .log-item {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 5px;
+    padding: 14px 4px;
+  }
+  .log-go { text-align: left; }
+}
+
+@media (max-width: 880px) {
+  .profile-grid { grid-template-columns: minmax(0, 1fr); gap: 30px; }
+  .project-card { grid-template-columns: minmax(0, 1fr); }
+  .project-cover {
+    border-right: 0;
+    border-bottom: 1px solid var(--border);
+    min-height: 148px;
+  }
+  .project-cover.is-empty { padding: 16px; }
+  .page-head { padding: 38px 0 26px; }
+  .page-head h1 { font-size: 26px; }
+  .profile-hero { padding: 42px 0 36px; }
+}

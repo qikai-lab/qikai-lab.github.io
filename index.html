@@ -3,13 +3,13 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>qikai-lab · 项目手记</title>
+<title>qikai-lab · 嵌入式与物联网</title>
 <meta name="author" content="qikai-lab">
 <link rel="canonical" href="https://qikai-lab.github.io/">
 <meta property="og:type" content="website">
-<meta property="og:site_name" content="qikai-lab · 项目手记">
+<meta property="og:site_name" content="qikai-lab">
 <meta property="og:url" content="https://qikai-lab.github.io/">
-<meta name="description" content="自己动手做完的嵌入式 / 物联网项目记录。从一颗 8 位 MCU 的寄存器，写到 Linux 上跑着的 C 服务端——包括走错的那几版，以及用来证明它跑通了的数据。">
+<meta name="description" content="qikai-lab 的个人主页。做嵌入式与物联网：8 位 MCU 裸机驱动、ZigBee 组网、ESP32 上云、Linux 上的 C 服务端。这里放自己动手做完的项目和开发手记。">
 <link rel="stylesheet" href="assets/css/style.css">
 </head>
 <body>
@@ -18,12 +18,12 @@
   <nav class="nav">
     <a class="brand" href="index.html">
       <span class="brand-mark">QL</span>
-      <span>qikai-lab · 项目手记</span>
+      <span>qikai-lab</span>
     </a>
     <div class="nav-links">
       <a href="index.html" class="active">首页</a>
-      <a href="#projects">项目</a>
-      <a href="projects/zigbee-env-monitor.html#logs">日志</a>
+      <a href="projects/">项目</a>
+      <a href="posts/">手记</a>
       <a href="#about">关于</a>
     </div>
   </nav>
@@ -31,80 +31,172 @@
 
 <main>
 
-  <!-- ==================== Hero ==================== -->
-  <section class="hero">
+  <!-- ==================== 个人介绍 ==================== -->
+  <section class="profile-hero">
     <div class="wrap-wide">
-      <span class="hero-kicker">
-        <svg width="12" height="12" viewBox="0 0 12 12" fill="none"><circle cx="6" cy="6" r="4" fill="#0d9488"/></svg>
-        嵌入式 · 物联网 · 从裸机到服务端
-      </span>
-      <h1>把东西做完，<br>再写清楚中间<em>走错</em>的那几段</h1>
-      <p>
-        这里是我自己动手做的项目。不是教程合集：每一篇记的都是当时真实发生的事——
-        哪一行写错了、为什么会错、最后用什么数据证明它对了。
-        方向上偏底层，从一颗 8 位 MCU 的寄存器配置，一路写到 Linux 上跑着的 C 服务端。
-      </p>
+      <div class="profile-grid">
 
-      <div class="hero-stats">
-        <div class="stat">
-          <div class="stat-num">1</div>
-          <div class="stat-label">在做的项目</div>
+        <div>
+          <div class="profile-id">
+            <div class="avatar">QL</div>
+            <div>
+              <div class="profile-name">qikai-lab</div>
+              <div class="profile-role">嵌入式 · 物联网 · 从裸机写到服务端</div>
+            </div>
+          </div>
+
+          <p class="profile-lede">
+            我做的事用一句话说：<strong>让一个电池供电的小设备，把数据送到网页上，还能被网页反向控制。</strong>
+          </p>
+          <p class="profile-lede">
+            具体一点，从一颗 <strong>8 位 MCU 的寄存器</strong>开始，配传感器、配无线、配屏幕；
+            数据出来之后往上走，接网关、上云、落库，最后在浏览器里画成一条能点选的曲线。
+            中间那段没人替你写，所以整条链路都是自己做的。
+          </p>
+          <p class="profile-lede">
+            这个站只放<strong>真做完的东西</strong>。写错的那几版留着，
+            因为「为什么错」比「正确做法」有用；结论一律带可对照的数据，
+            不写「效果很好」。
+          </p>
+
+          <div class="profile-actions">
+            <a class="btn btn-primary" href="projects/">看项目 →</a>
+            <a class="btn" href="posts/">开发手记</a>
+            <a class="btn" href="https://github.com/qikai-lab">GitHub</a>
+          </div>
         </div>
-        <div class="stat">
-          <div class="stat-num">10</div>
-          <div class="stat-label">开发手记</div>
-        </div>
-        <div class="stat">
-          <div class="stat-num">4</div>
-          <div class="stat-label">全链路的分层</div>
-        </div>
-        <div class="stat">
-          <div class="stat-num">230</div>
-          <div class="stat-label">离线测试断言</div>
-        </div>
+
+        <aside class="profile-side">
+          <p class="side-title">现在</p>
+          <div class="info-row"><span class="k">在做的项目</span><span class="v">1 个</span></div>
+          <div class="info-row"><span class="k">状态</span><span class="v">已定版 v1.0</span></div>
+          <div class="info-row"><span class="k">手记</span><span class="v">10 篇</span></div>
+
+          <p class="side-title">常用的</p>
+          <div class="chip-row">
+            <span class="chip">C</span>
+            <span class="chip">Linux</span>
+            <span class="chip">ESP-IDF</span>
+            <span class="chip">Z-Stack</span>
+            <span class="chip">SQLite</span>
+            <span class="chip">原生 JS</span>
+          </div>
+
+          <p class="side-title">关心的</p>
+          <div class="info-row"><span class="k">方向</span><span class="v">IoT 应用开发</span></div>
+          <div class="info-row"><span class="k">偏好</span><span class="v">不套框架</span></div>
+          <div class="info-row"><span class="k">写法</span><span class="v">留错误版本</span></div>
+        </aside>
+
       </div>
     </div>
   </section>
 
+  <!-- ==================== 技术方向 ==================== -->
+  <div class="wrap-wide">
+    <div class="section-head">
+      <h2>在哪些层面动手</h2>
+      <span>四层，都是自己写的</span>
+    </div>
+
+    <div class="skill-grid">
+
+      <div class="skill-card">
+        <h3>裸机与驱动</h3>
+        <p>寄存器级配置、GPIO / ADC / 单总线时序、串口收发</p>
+        <div class="chip-row">
+          <span class="chip">CC2530</span>
+          <span class="chip">8051</span>
+          <span class="chip">IAR</span>
+          <span class="chip">DHT11</span>
+        </div>
+      </div>
+
+      <div class="skill-card">
+        <h3>无线组网</h3>
+        <p>IEEE 802.15.4、Z-Stack 任务调度、自定义定长帧协议</p>
+        <div class="chip-row">
+          <span class="chip">ZigBee</span>
+          <span class="chip">OSAL</span>
+          <span class="chip">单播/广播</span>
+        </div>
+      </div>
+
+      <div class="skill-card">
+        <h3>Linux 用户态</h3>
+        <p>termios、epoll 事件循环、SQLite、手写 HTTP、systemd</p>
+        <div class="chip-row">
+          <span class="chip">C</span>
+          <span class="chip">epoll</span>
+          <span class="chip">WAL</span>
+          <span class="chip">socket</span>
+        </div>
+      </div>
+
+      <div class="skill-card">
+        <h3>上云与可视化</h3>
+        <p>MQTT 报文自己拼、canvas 画曲线、时间桶聚合</p>
+        <div class="chip-row">
+          <span class="chip">ESP-IDF</span>
+          <span class="chip">MQTT</span>
+          <span class="chip">canvas</span>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
   <!-- ==================== 项目 ==================== -->
   <div class="wrap-wide" id="projects">
     <div class="section-head">
-      <h2>在做的事</h2>
-      <span>按最近更新排序</span>
+      <h2>项目</h2>
+      <span><a class="crumb" href="projects/">全部项目 →</a></span>
     </div>
 
-    <div class="post-list">
+    <div class="project-grid">
 
-      <a class="post-card" href="projects/zigbee-env-monitor.html">
-        <div class="post-card-top">
-          <span class="tag done">第 5 步已通过</span>
-          <span class="tag">ZigBee</span>
-          <span class="tag">CC2530</span>
-          <span class="tag">ESP-IDF</span>
-          <span class="tag">Linux C</span>
-          <span class="post-date">2026-10-22 起 · 持续更新</span>
+      <a class="project-card" href="projects/zigbee-env-monitor.html">
+        <div class="project-cover">
+          <img src="assets/img/trend-page-trend.png" alt="网页上的历史曲线：双 Y 轴与点选读数">
         </div>
-        <h3>ZigBee 无线环境监测系统</h3>
-        <p>
-          电池供电的节点测温湿度、烟雾、光照、人体，经 ZigBee 汇聚到协调器；
-          一路串口进 Linux 网关落库、出曲线、判烟雾告警、网页远程控制继电器，
-          另一路并联给 ESP32 转成 MQTT 上云。两条链路同时跑，互为交叉验证。
-          四层全部自己写：裸机驱动、无线组网、网关固件、C 服务端。
-          目前 230 项离线断言、串口实测 1.000 帧/秒、远控 8 次命令 8 次命中。
-        </p>
+        <div class="project-body">
+          <div class="post-card-top">
+            <span class="tag done">已定版 v1.0</span>
+            <span class="tag">物联网</span>
+            <span class="tag">嵌入式</span>
+          </div>
+          <h3>ZigBee 无线环境监测系统</h3>
+          <p>
+            电池供电的节点测温湿度、烟雾、光照、人体，经 ZigBee 汇聚到协调器；
+            一路串口进 Linux 网关落库、出曲线、判烟雾告警、网页远程控制继电器，
+            另一路并联给 ESP32 转成 MQTT 上云。四层全部自己写。
+          </p>
+          <div class="project-meta">
+            <span>2026-10-22 → 2026-10-30</span>
+            <span>·</span>
+            <span>10 篇手记</span>
+            <span>·</span>
+            <span>230 项断言</span>
+          </div>
+        </div>
       </a>
 
-      <div class="post-card placeholder">
-        <div class="post-card-top">
-          <span class="tag">筹备中</span>
-          <span class="post-date">还没开工，所以还没写</span>
+      <div class="project-card" style="cursor:default">
+        <div class="project-cover is-empty">
+          <span style="font-size:12.5px;color:var(--text-mute);text-align:center;line-height:1.7">
+            还没<br>开工
+          </span>
         </div>
-        <h3>下一个项目</h3>
-        <p>
-          手上还有 ESP32-S3 和第二块彩屏。等当前这个项目把低功耗和演示收尾做完，
-          再从「把网关搬到自己可控的公网机器上」和「换一颗别的 MCU 重写一遍采集层」里挑一个。
-          没动手之前不先写计划——写成「即将开始的宏伟项目」没什么意义。
-        </p>
+        <div class="project-body">
+          <div class="post-card-top">
+            <span class="tag">筹备中</span>
+          </div>
+          <h3>下一个项目</h3>
+          <p>
+            手上的板子还没用完。方向在「把网关搬到公网机器上」和「换一颗别的 MCU 重写采集层」之间，
+            没动手之前不先写计划——写成「即将开始的宏伟项目」没什么意义。
+          </p>
+        </div>
       </div>
 
     </div>
@@ -114,7 +206,7 @@
   <div class="wrap-wide">
     <div class="section-head">
       <h2>最近写的</h2>
-      <span>按时间倒序</span>
+      <span><a class="crumb" href="posts/">全部手记 →</a></span>
     </div>
 
     <div class="post-list">
@@ -129,10 +221,9 @@
         </div>
         <h3>第 7 周：历史曲线，以及被推翻两次的「串口丢帧」</h3>
         <p>
-          1 小时 / 24 小时曲线：用 SQL 时间桶把 86400 条压成 96 个点，断档不补 0，
-          X 轴按真实时间定位而不是数组下标。附带一次翻案——追了两天的
-          「串口只有 0.33 帧/秒」，最后发现是 systemd 服务在后台跑着第二个网关，
-          两个进程抢同一个 tty。
+          用 SQL 时间桶把 86400 条压成 96 个点，断档不补 0，X 轴按真实时间定位。
+          附带一次翻案——追了两天的「串口只有 0.33 帧/秒」，最后发现是 systemd 服务
+          在后台跑着第二个网关，两个进程抢同一个 tty。
         </p>
       </a>
 
@@ -147,7 +238,7 @@
         <p>
           第一版用广播发命令，20 次只成 5 次；第二版为了补丢包连发 5 次，
           命中率上去了却把休眠终端挤出网络。真正的解是「单播 + 只补发 1 次 +
-          间隔对齐 POLL_RATE + 关掉 APS 确认」，实测 8 次命令 8 次命中、50 帧无断档。
+          间隔对齐 POLL_RATE + 关掉 APS 确认」，实测 8 次命令 8 次命中。
         </p>
       </a>
 
@@ -166,27 +257,7 @@
         </p>
       </a>
 
-      <a class="post-card" href="posts/week3-linux-gateway.html">
-        <div class="post-card-top">
-          <span class="post-date">2026-10-26</span>
-          <span class="tag done">第 3 步已通过</span>
-          <span class="tag">Linux C</span>
-          <span class="tag">epoll</span>
-          <span class="tag">SQLite</span>
-        </div>
-        <h3>第 3 周：Linux 网关，以及为什么网页不能直接查数据库</h3>
-        <p>
-          纯 C 写完整链路：termios 串口、epoll 统一事件循环、SQLite WAL 批量提交、
-          手写 socket HTTP。核心是一个反直觉的发现——批量提交让「库里最新的那条」
-          永远落后 19 秒，所以实时数据必须走内存。
-        </p>
-      </a>
-
     </div>
-
-    <p class="more-link">
-      <a href="projects/zigbee-env-monitor.html#logs">看全部 9 篇 →</a>
-    </p>
   </div>
 
   <!-- ==================== 关于 ==================== -->
@@ -199,19 +270,19 @@
     <div class="about">
       <p>
         我是 <strong>qikai-lab</strong>，做嵌入式和物联网方向的东西。这个站只放自己动手做完的项目，
-        不放转载、不放资料整理。现在只有一个项目，往后会有更多。
+        不放转载、不放资料整理。
       </p>
       <p>
         写法上有两条自己定的规矩。一是<strong>只写真实发生过的事</strong>：
         写错的那几版留着，因为「为什么错」比「正确做法」有用得多，
         三个月后回来看的也是这部分。二是<strong>给可以对照的现象和数据</strong>——
-        帧数、坏帧率、延迟几秒、哪一次是 8/8 命中，
-        而不是一句「效果很好」。
+        帧数、坏帧率、延迟几秒、哪一次是 8/8 命中，而不是一句「效果很好」。
       </p>
       <p>
-        这些手记是按时间顺序写的，不是按知识点整理的，所以前因后果散在各篇里。
-        想快速看结论走<a href="projects/zigbee-env-monitor.html">项目页</a>，
-        那里有架构图、技术栈、当前进度和可下载的源码。
+        站点的结构是「个人 → 项目 → 手记」三层：这里是入口，
+        <a href="projects/">项目</a>放成体系的东西（架构、硬件、连线、验收数据），
+        <a href="posts/">手记</a>放按时间写的开发过程。手记是先写的，所以它的顺序就是当时的真实顺序，
+        不是按知识点整理过的。
       </p>
       <p>
         代码在 GitHub：<a href="https://github.com/qikai-lab">github.com/qikai-lab</a>。
@@ -223,7 +294,7 @@
 
 <footer class="site-footer">
   <div class="wrap-wide">
-    <span>qikai-lab · 项目手记</span>
+    <span>qikai-lab · 嵌入式与物联网</span>
     <span>最近更新：2026-10-30</span>
   </div>
 </footer>

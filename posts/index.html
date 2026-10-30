@@ -1,0 +1,177 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>开发手记 · qikai-lab</title>
+<meta name="author" content="qikai-lab">
+<link rel="canonical" href="https://qikai-lab.github.io/posts/">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="qikai-lab">
+<meta property="og:url" content="https://qikai-lab.github.io/posts/">
+<meta name="description" content="qikai-lab 的开发手记索引：按时间记录的真实开发过程，包含走错的版本、排障过程和用来证明结论的实测数据。">
+<link rel="stylesheet" href="../assets/css/style.css">
+</head>
+<body>
+
+<header class="site-header">
+  <nav class="nav">
+    <a class="brand" href="../index.html">
+      <span class="brand-mark">QL</span>
+      <span>qikai-lab</span>
+    </a>
+    <div class="nav-links">
+      <a href="../index.html">首页</a>
+      <a href="../projects/">项目</a>
+      <a href="index.html" class="active">手记</a>
+      <a href="../index.html#about">关于</a>
+    </div>
+  </nav>
+</header>
+
+<main>
+
+  <section class="page-head">
+    <div class="wrap-wide">
+      <a class="crumb" href="../index.html">← 返回首页</a>
+      <h1>开发手记</h1>
+      <p>
+        这些是先写的，记录的是当时的真实顺序，不是按知识点重新组织过的。
+        所以前因后果散在各篇里：想快速看结论去
+        <a href="../projects/zigbee-env-monitor.html">项目页</a>，想看怎么一步步踩出来的按时间读。
+      </p>
+    </div>
+  </section>
+
+  <div class="wrap-wide">
+
+    <div class="section-head">
+      <h2>ZigBee 无线环境监测系统</h2>
+      <span>10 篇 · 2026-10-22 → 2026-10-30</span>
+    </div>
+
+    <div class="section-head" style="margin-top:26px">
+      <h3 style="font-size:15px;font-weight:650;margin:0;color:var(--text-soft)">开发日志</h3>
+      <span>按时间倒序</span>
+    </div>
+
+    <div class="log-list">
+
+      <a class="log-item" href="week7-trend-chart.html">
+        <span class="log-when">2026-10-30</span>
+        <span>
+          <span class="log-title">第 7 周：历史曲线，以及被推翻两次的「串口丢帧」</span>
+          <span class="log-desc">SQL 时间桶把 86400 条压成 96 点；追了两天的 0.33 帧/秒，真凶是 systemd 在后台跑着第二个网关。</span>
+        </span>
+        <span class="log-go">阅读 →</span>
+      </a>
+
+      <a class="log-item" href="week6-relay-remote.html">
+        <span class="log-when">2026-10-28</span>
+        <span>
+          <span class="log-title">第 6 周：网页点一下，继电器就响——中间隔了三次翻车</span>
+          <span class="log-desc">广播 5/20 → 连发 5 次踢掉终端 → 单播 + 只补发 1 次，最后 8/8 命中。</span>
+        </span>
+        <span class="log-go">阅读 →</span>
+      </a>
+
+      <a class="log-item" href="week5-esp32-bridge.html">
+        <span class="log-when">2026-10-27</span>
+        <span>
+          <span class="log-title">第 5 周：ESP32 上云，以及「COM 口在」不等于「板子活着」</span>
+          <span class="log-desc">四个坑全与代码无关：没上电、自动下载电路不通、工具链找不到、DHCP 旧租约。</span>
+        </span>
+        <span class="log-go">阅读 →</span>
+      </a>
+
+      <a class="log-item" href="week4-smoke-alarm.html">
+        <span class="log-when">2026-10-24</span>
+        <span>
+          <span class="log-title">第 4 周：烟雾告警，以及最容易写出「永远不报警」的那行代码</span>
+          <span class="log-desc">中值滤波、自适应基线、迟滞防抖；真正的坑是「更新基线」写在「判定」前面。</span>
+        </span>
+        <span class="log-go">阅读 →</span>
+      </a>
+
+      <a class="log-item" href="week3-linux-gateway.html">
+        <span class="log-when">2026-10-26</span>
+        <span>
+          <span class="log-title">第 3 周：Linux 网关，以及为什么网页不能直接查数据库</span>
+          <span class="log-desc">termios + epoll + SQLite WAL + 手写 HTTP；批量提交让「最新那条」落后 19 秒。</span>
+        </span>
+        <span class="log-go">阅读 →</span>
+      </a>
+
+      <a class="log-item" href="week2-network.html">
+        <span class="log-when">2026-10-23</span>
+        <span>
+          <span class="log-title">第 2 周：ZigBee 组网，以及一个差点蒙混过关的设计错误</span>
+          <span class="log-desc">采集和上报被绑在同一个定时器上——没连上协调器就既不采也不显示。</span>
+        </span>
+        <span class="log-go">阅读 →</span>
+      </a>
+
+      <a class="log-item" href="week1-sensors.html">
+        <span class="log-when">2026-10-23</span>
+        <span>
+          <span class="log-title">第 1 周：五个传感器全部打通</span>
+          <span class="log-desc">真正花时间的只有 ADC 那两路，连续改错三次：取位错、把 ADC 占死、ECH 位数搞错。</span>
+        </span>
+        <span class="log-go">阅读 →</span>
+      </a>
+
+      <a class="log-item" href="week0-bringup.html">
+        <span class="log-when">2026-10-22</span>
+        <span>
+          <span class="log-title">第 0 周：让 CC2530 跑起自己写的代码</span>
+          <span class="log-desc">从点灯到串口打印的五个坑：IAR 版本、烧录器、蜂鸣器长鸣、没有 hex、中文乱码。</span>
+        </span>
+        <span class="log-go">阅读 →</span>
+      </a>
+
+    </div>
+
+    <div class="section-head" style="margin-top:38px">
+      <h3 style="font-size:15px;font-weight:650;margin:0;color:var(--text-soft)">设计与参考</h3>
+      <span>不是过程记录，是结论</span>
+    </div>
+
+    <div class="log-list">
+
+      <a class="log-item" href="project-overview.html">
+        <span class="log-when">2026-10-22</span>
+        <span>
+          <span class="log-title">项目全景：这个系统到底长什么样</span>
+          <span class="log-desc">四层架构、六个可演示功能、五步路线，以及为什么砍掉了另外三个候选方案。</span>
+        </span>
+        <span class="log-go">阅读 →</span>
+      </a>
+
+      <a class="log-item" href="pinout-reference.html">
+        <span class="log-when">2026-10-22</span>
+        <span>
+          <span class="log-title">终端节点板引脚速查表</span>
+          <span class="log-desc">从原版工程源码逐条核对出来的引脚分配，含 ADC 通道选择与三条铁律。</span>
+        </span>
+        <span class="log-go">阅读 →</span>
+      </a>
+
+    </div>
+
+    <p class="more-link" style="margin-top:30px">
+      <a href="../projects/zigbee-env-monitor.html">← 回到项目介绍页</a>
+    </p>
+
+  </div>
+
+</main>
+
+<footer class="site-footer">
+  <div class="wrap-wide">
+    <span>qikai-lab · 嵌入式与物联网</span>
+    <span>最近更新：2026-10-30</span>
+  </div>
+</footer>
+
+</body>
+</html>

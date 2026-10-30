@@ -3,13 +3,13 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>ZigBee 无线环境监测系统 · qikai-lab 项目手记</title>
+<title>ZigBee 无线环境监测系统 · qikai-lab</title>
 <meta name="author" content="qikai-lab">
 <link rel="canonical" href="https://qikai-lab.github.io/projects/zigbee-env-monitor.html">
 <meta property="og:type" content="article">
-<meta property="og:site_name" content="qikai-lab · 项目手记">
+<meta property="og:site_name" content="qikai-lab">
 <meta property="og:url" content="https://qikai-lab.github.io/projects/zigbee-env-monitor.html">
-<meta name="description" content="从一块 CC2530 开始做一个完整的物联网项目：传感器节点、ZigBee 组网、ESP32 网关、Ubuntu 服务器与网页端。完整记录踩坑与实现过程。">
+<meta name="description" content="电池供电的 CC2530 节点采集温湿度、烟雾、光照、人体，经 ZigBee 汇聚后分两条并行链路：串口进 Linux 网关出网页，ESP32-S3 转 MQTT 上云。含硬件清单、连线图、演示视频与验收数据。">
 <link rel="stylesheet" href="../assets/css/style.css">
 </head>
 <body>
@@ -18,12 +18,12 @@
   <nav class="nav">
     <a class="brand" href="../index.html">
       <span class="brand-mark">QL</span>
-      <span>qikai-lab · 项目手记</span>
+      <span>qikai-lab</span>
     </a>
     <div class="nav-links">
       <a href="../index.html">首页</a>
-      <a href="../index.html#projects" class="active">项目</a>
-      <a href="zigbee-env-monitor.html#logs">日志</a>
+      <a href="index.html" class="active">项目</a>
+      <a href="../posts/">手记</a>
       <a href="../index.html#about">关于</a>
     </div>
   </nav>
@@ -31,219 +31,423 @@
 
 <main>
 
-  <!-- ==================== Hero ==================== -->
-  <section class="hero">
+  <!-- ==================== 页头 ==================== -->
+  <section class="page-head">
     <div class="wrap-wide">
-      <span class="hero-kicker">
-        <svg width="12" height="12" viewBox="0 0 12 12" fill="none"><circle cx="6" cy="6" r="4" fill="#0d9488"/></svg>
-        嵌入式 · IoT 全链路 · 已跑通
-      </span>
-      <h1>从一块 <em>CC2530</em> 开始，<br>一路接到网页上的那条曲线</h1>
+      <a class="crumb" href="index.html">← 全部项目</a>
+      <h1>ZigBee 无线环境监测系统</h1>
       <p>
         电池供电的传感器节点采集温湿度、烟雾、光照与人体感应，经 ZigBee 协调器汇聚，
         串口送进 Ubuntu 上的 C 网关：落库、出曲线、判定烟雾告警、网页远程控制继电器；
-        另一路经 ESP32-S3 转成 MQTT 上云，两条链路并行、互为交叉验证。
-        记录从零到跑通的每一步，包括走错的那几次。
-        服务端源码在 <a href="../code/linux_gateway/">code/linux_gateway/</a>（230 项离线断言，
-        无需任何硬件即可复现），网关固件在 <a href="../code/esp32_bridge/">code/esp32_bridge/</a>。
-        <br><strong>定版 v1.0（2026-10-30）：</strong>功能已冻结，接线、帧格式、故障对照
-        见 <a href="../FINAL-SPEC.md">FINAL-SPEC.md</a>。
+        另一路经 ESP32-S3 转成 MQTT 上云。两条链路并行、互为交叉验证。
       </p>
-
-      <div class="hero-stats">
-        <div class="stat">
-          <div class="stat-num">4</div>
-          <div class="stat-label">系统分层</div>
-        </div>
-        <div class="stat">
-          <div class="stat-num">5</div>
-          <div class="stat-label">实施步骤</div>
-        </div>
-        <div class="stat">
-          <div class="stat-num">8</div>
-          <div class="stat-label">板载外设</div>
-        </div>
-        <div class="stat">
-          <div class="stat-num">230</div>
-          <div class="stat-label">离线测试断言</div>
-        </div>
+      <div class="post-card-top" style="margin-top:16px">
+        <span class="tag done">已定版 v1.0 · 2026-10-30</span>
+        <span class="tag">物联网</span>
+        <span class="tag">嵌入式</span>
+        <span class="tag">CC2530</span>
+        <span class="tag">ESP-IDF</span>
+        <span class="tag">Linux C</span>
       </div>
     </div>
   </section>
 
-  <!-- ==================== 文章列表 ==================== -->
-  <div class="wrap-wide" id="logs">
-    <div class="section-head">
-      <h2>开发日志</h2>
-      <span>按时间倒序 · 全部为真实记录</span>
+  <div class="wrap-wide">
+
+    <!-- ==================== 概览数字 ==================== -->
+    <div class="spec-grid" style="margin-top:34px">
+      <div class="spec">
+        <div class="spec-num">4</div>
+        <div class="spec-label">系统分层，全自己写</div>
+      </div>
+      <div class="spec">
+        <div class="spec-num">230</div>
+        <div class="spec-label">离线断言，无需硬件</div>
+      </div>
+      <div class="spec">
+        <div class="spec-num">1.000</div>
+        <div class="spec-label">串口帧/秒（实测）</div>
+      </div>
+      <div class="spec">
+        <div class="spec-num">8/8</div>
+        <div class="spec-label">远控命中</div>
+      </div>
+      <div class="spec">
+        <div class="spec-num">10</div>
+        <div class="spec-label">篇开发手记</div>
+      </div>
     </div>
 
-    <div class="post-list">
+    <!-- ==================== 一、它是什么 ==================== -->
+    <div class="section-head">
+      <h2>一、它是什么</h2>
+      <span>四层架构</span>
+    </div>
 
-      <a class="post-card" href="../posts/week7-trend-chart.html">
-        <div class="post-card-top">
-          <span class="post-date">2026-10-30</span>
-          <span class="tag done">已通过</span>
-          <span class="tag">SQLite</span>
-          <span class="tag">canvas</span>
-          <span class="tag">排障复盘</span>
-        </div>
-        <h3>第 7 周：历史曲线，以及被推翻两次的「串口丢帧」</h3>
-        <p>
-          1 小时 / 24 小时曲线：用 SQL 时间桶把 86400 条压成 96 个点，断档不补 0，
-          X 轴按真实时间定位。三个设计陷阱各踩了一遍——补 0 会画出假的「温度 0 度」、
-          按下标画会让掉线 5 分钟和 5 秒看起来一样宽、16KB 缓冲区装不下坐标轴。
-          附带一次翻案：追了两天的「串口只有 0.33 帧/秒」，最后发现是 systemd 服务
-          在后台跑着第二个网关，两个进程抢同一个 tty 的字节流。
-        </p>
-      </a>
+    <div class="diagram-box">
+      <img src="../assets/img/architecture.svg" alt="四层架构图：感知层、网络层、网关层、应用层" style="max-width:100%;display:block;margin:0 auto">
+    </div>
 
-      <a class="post-card" href="../posts/week6-relay-remote.html">
-        <div class="post-card-top">
-          <span class="post-date">2026-10-28</span>
-          <span class="tag done">第 5 步已通过</span>
-          <span class="tag">ZigBee 下行</span>
-          <span class="tag">CC2530</span>
-          <span class="tag">MQTT 手写报文</span>
-        </div>
-        <h3>第 6 周：网页点一下，继电器就响——中间隔了三次翻车</h3>
-        <p>
-          从网页按钮到继电器吸合，中间隔着 MQTT、ESP32、协调器、ZigBee 五段。
-          第一版用广播发命令，20 次只成 5 次；第二版为了补丢包连发 5 次，
-          命中率上去了却把休眠终端挤出网络（屏幕定格、数据不刷新）。
-          真正的解是「单播 + 只补发 1 次 + 间隔对齐 POLL_RATE + 关掉 APS 确认」，
-          实测 8 次命令 8 次命中、50 帧无断档。附两段演示视频与「延迟 1~2.6 秒」的诚实说明。
-        </p>
-      </a>
+    <div class="table-wrap" style="margin-top:16px">
+      <table>
+        <thead>
+          <tr>
+            <th>层</th>
+            <th>具体是什么</th>
+            <th>跑什么</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><strong>感知</strong></td>
+            <td>CC2530 终端节点（电池供电，放房间另一头）</td>
+            <td>IAR 编译的 Z-Stack EndDevice</td>
+          </tr>
+          <tr>
+            <td><strong>汇聚</strong></td>
+            <td>CC2530 协调器（同款底板，无传感器）</td>
+            <td>Z-Stack Coordinator</td>
+          </tr>
+          <tr>
+            <td><strong>旁路</strong></td>
+            <td>ESP32-S3 开发板（与 Ubuntu 串口链路<strong>并联</strong>，不是串联）</td>
+            <td>ESP-IDF 编译的 <code>esp32_bridge</code></td>
+          </tr>
+          <tr>
+            <td><strong>服务端</strong></td>
+            <td>Ubuntu 虚拟机</td>
+            <td><code>gw</code> + <code>mqtt_sub</code> + <code>mosquitto</code></td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
 
-      <a class="post-card" href="../posts/week5-esp32-bridge.html">
-        <div class="post-card-top">
-          <span class="post-date">2026-10-27</span>
-          <span class="tag done">阶段 A / B 已通过</span>
-          <span class="tag">ESP-IDF</span>
-          <span class="tag">UART</span>
-          <span class="tag">MQTT</span>
-        </div>
-        <h3>第 5 周：ESP32 上云，以及「COM 口在」不等于「板子活着」</h3>
-        <p>
-          协调器的串口信号并联一路喂给 ESP32-S3，走 WiFi + MQTT 上云。
-          四个坑全和代码无关：设备管理器里有 COM 口但主芯片根本没上电；
-          自动下载电路不通，esptool 默认的 <code>default_reset</code>
-          每次把手动进好的下载模式踢掉；新版 EIM 安装器让 <code>idf.py</code> 找不到工具链；
-          换热点后 Ubuntu 抱着旧 DHCP 租约不换 IP，表现为「broker 明明在跑却连不上」。
-          附 60 帧零坏帧（阶段 A）与 156 帧零解析失败（阶段 B）的双链路对账数据。
-        </p>
-      </a>
+    <!-- ==================== 二、演示视频 ==================== -->
+    <div class="section-head">
+      <h2>二、演示视频</h2>
+      <span>手机竖拍，无剪辑</span>
+    </div>
 
-      <a class="post-card" href="../posts/week3-linux-gateway.html">
-        <div class="post-card-top">
-          <span class="post-date">2026-10-26</span>
-          <span class="tag done">第 3 步已通过</span>
-          <span class="tag">Linux C</span>
-          <span class="tag">epoll</span>
-          <span class="tag">SQLite</span>
-          <span class="tag">systemd</span>
-        </div>
-        <h3>第 3 周：Linux 网关，以及为什么网页不能直接查数据库</h3>
-        <p>
-          纯 C 写完整链路：termios 串口、epoll 统一事件循环、SQLite WAL 批量提交、
-          手写 socket HTTP、网页编进二进制。核心是一个反直觉的发现——
-          批量提交让「库里最新的那条」永远落后 19 秒，所以实时数据必须走内存。
-          最后用 systemd 托管：<code>kill -9</code> 后 3 秒自动拉起，开机自启。
-        </p>
-      </a>
+    <div class="video-grid">
 
-      <a class="post-card" href="../posts/week4-smoke-alarm.html">
-        <div class="post-card-top">
-          <span class="post-date">2026-10-24</span>
-          <span class="tag done">M4 已通过</span>
-          <span class="tag">信号处理</span>
-          <span class="tag">状态机</span>
+      <div class="video-card">
+        <video controls preload="metadata" poster="../assets/img/trend-demo-poster.png">
+          <source src="../assets/video/trend-demo.mp4" type="video/mp4">
+          你的浏览器不支持 video 标签。
+        </video>
+        <div class="video-cap">
+          <strong>历史曲线：1 小时 / 24 小时切换 + 点选读数</strong>
+          <span>曲线按真实时间轴画，掉线处断开不连线；鼠标悬停显示该点温湿度</span>
         </div>
-        <h3>第 4 周：烟雾告警，以及最容易写出「永远不报警」的那行代码</h3>
-        <p>
-          MQ-2 的读数没有绝对意义，所以不能写死阈值。中值滤波吃尖峰、自适应基线跟漂移、
-          迟滞防反复报——但真正的坑是判定顺序：只要把「更新基线」写在「判定」前面，
-          系统就会永久保持沉默，而且和「一切正常」输出完全一样。
-        </p>
-      </a>
+      </div>
 
-      <a class="post-card" href="../posts/week2-network.html">
-        <div class="post-card-top">
-          <span class="post-date">2026-10-23</span>
-          <span class="tag done">第 2 步已通过</span>
-          <span class="tag">Z-Stack</span>
-          <span class="tag">OSAL</span>
+      <div class="video-card">
+        <video controls preload="metadata">
+          <source src="../assets/video/relay-demo-web.mp4" type="video/mp4">
+          你的浏览器不支持 video 标签。
+        </video>
+        <div class="video-cap">
+          <strong>网页远控：点按钮，继电器吸合</strong>
+          <span>从浏览器点击到节点上"咔"一声，整条反向链路走通</span>
         </div>
-        <h3>第 2 周：ZigBee 组网，以及一个差点蒙混过关的设计错误</h3>
-        <p>
-          组网只花了半天，真正的问题是顺手一次断网测试撞出来的：终端一直没连上协调器时，
-          它连传感器都不采、屏幕也冻结——采集和上报被错误地绑在了同一个定时器上。
-          这不是 bug，是设计错误。
-        </p>
-      </a>
+      </div>
 
-      <a class="post-card" href="../posts/week1-sensors.html">
-        <div class="post-card-top">
-          <span class="post-date">2026-10-23</span>
-          <span class="tag done">第 1 步已通过</span>
-          <span class="tag">ADC</span>
-          <span class="tag">排障复盘</span>
+      <div class="video-card">
+        <video controls preload="metadata">
+          <source src="../assets/video/relay-demo-ubuntu.mp4" type="video/mp4">
+          你的浏览器不支持 video 标签。
+        </video>
+        <div class="video-cap">
+          <strong>终端侧：命令下发的完整日志</strong>
+          <span>网关收到请求、发 MQTT、ESP32 转 UART、协调器广播、节点动作</span>
         </div>
-        <h3>第 1 周：五个传感器全部打通</h3>
-        <p>
-          温湿度、光照、烟雾、人体红外、继电器全部读通。真正花时间的只有 ADC 那两路，
-          而且我连续改错了三次——取位错、把 ADC 自己占死、最后发现 ECH 是 4 位不是 3 位。
-          这篇把三次弯路和最后的铁证完整写下来了。
-        </p>
-      </a>
-
-      <a class="post-card" href="../posts/week0-bringup.html">
-        <div class="post-card-top">
-          <span class="post-date">2026-10-22</span>
-          <span class="tag done">M3 已通过</span>
-          <span class="tag">CC2530</span>
-          <span class="tag">IAR</span>
-        </div>
-        <h3>第 0 周：让 CC2530 跑起自己写的代码</h3>
-        <p>
-          从点亮 LED 到串口打印，中间踩了五个坑：IAR 版本与协议栈不匹配、Flash Programmer 2 根本不认 CC2530、
-          蜂鸣器上电长鸣、编译出来没有 <code>.hex</code>、中文注释全乱码。
-          这篇把每个坑的现象、根因和最终解法都写清楚了。
-        </p>
-      </a>
-
-      <a class="post-card" href="../posts/project-overview.html">
-        <div class="post-card-top">
-          <span class="post-date">2026-10-22</span>
-          <span class="tag accent">项目设计</span>
-          <span class="tag">架构</span>
-        </div>
-        <h3>项目全景：这个系统到底长什么样</h3>
-        <p>
-          四层架构、六个可演示功能、五步实施路线，以及为什么最终砍掉了另外三个候选方案。
-          如果你也在一块 MCU 和一堆模块之间不知道该做什么，这篇是决策过程。
-        </p>
-      </a>
-
-      <a class="post-card" href="../posts/pinout-reference.html">
-        <div class="post-card-top">
-          <span class="post-date">2026-10-22</span>
-          <span class="tag accent">参考资料</span>
-          <span class="tag">硬件</span>
-        </div>
-        <h3>终端节点板引脚速查表</h3>
-        <p>
-          从课程原版工程源码逐条核对出来的引脚分配，含 ADC 通道选择方法与三条铁律。
-          之前那份从原理图 PDF 提取的版本是错的，这篇记录了错在哪、为什么错。
-        </p>
-      </a>
+      </div>
 
     </div>
 
-    <!-- ==================== 技术栈 ==================== -->
+    <!-- ==================== 三、硬件清单 ==================== -->
     <div class="section-head">
-      <h2>技术栈</h2>
+      <h2>三、硬件清单</h2>
+      <span>型号级，照着买能复现</span>
+    </div>
+
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>类别</th>
+            <th>型号 / 规格</th>
+            <th>数量</th>
+            <th>用途与备注</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><strong>终端节点</strong></td>
+            <td>CC2530F256 核心板 + 紫色底板</td>
+            <td>1</td>
+            <td>板载 DHT11、光敏、MQ-2、人体红外、继电器、蜂鸣器、1.44" TFT 彩屏</td>
+          </tr>
+          <tr>
+            <td><strong>协调器</strong></td>
+            <td>CC2530F256 + 同款底板</td>
+            <td>1</td>
+            <td>不接传感器，从 <code>P0_3</code> 输出 24 字节定长帧</td>
+          </tr>
+          <tr>
+            <td><strong>无线网关</strong></td>
+            <td>ESP32-S3-WROOM-1 N16R8</td>
+            <td>1</td>
+            <td>16MB Flash，板载 0.91" OLED 状态屏（SSD1306 128×32）</td>
+          </tr>
+          <tr>
+            <td><strong>烧录器</strong></td>
+            <td>CC-Debugger</td>
+            <td>1</td>
+            <td>配合 IAR 下载到两颗 CC2530</td>
+          </tr>
+          <tr>
+            <td><strong>连线</strong></td>
+            <td>杜邦线（母对母）</td>
+            <td>3 根</td>
+            <td><code>P0_3→GPIO18</code>、<code>GPIO17→P0_5</code>、<code>GND→GND</code></td>
+          </tr>
+          <tr>
+            <td><strong>服务器</strong></td>
+            <td>Ubuntu（VMware 虚拟机）</td>
+            <td>1</td>
+            <td>跑 <code>mosquitto</code> + <code>gw</code> + <code>mqtt_sub</code>，gcc + libsqlite3-dev</td>
+          </tr>
+          <tr>
+            <td><strong>供电</strong></td>
+            <td>电池盒（节点）/ USB（协调器、ESP32）</td>
+            <td>—</td>
+            <td>节点拔掉 USB 只插电池仍能组网传数据，已实证</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="media-grid" style="margin-top:18px">
+      <figure class="figure">
+        <img src="../assets/img/node-board.jpg" alt="CC2530 终端节点板实物">
+        <figcaption>终端节点：核心板 + 紫色底板，传感器与彩屏都焊在底板上</figcaption>
+      </figure>
+      <figure class="figure">
+        <img src="../assets/img/coordinator-board.jpg" alt="CC2530 协调器实物">
+        <figcaption>协调器：同款底板但不接传感器，只负责收无线帧并从串口吐出来</figcaption>
+      </figure>
+    </div>
+
+    <!-- ==================== 四、连线图 ==================== -->
+    <div class="section-head">
+      <h2>四、连线图</h2>
+      <span>核心只有一处：P0_3 分两路</span>
+    </div>
+
+    <p style="font-size:14.5px;color:var(--text-soft);max-width:720px;margin:0 0 18px">
+      最容易搞错的一点：<strong>ESP32 不是串在 Ubuntu 前面的中间环节</strong>。
+      协调器同一个 <code>P0_3</code> 脚同时喂两路——一路给板载 CH340 进电脑，一路飞线给 ESP32。
+      这是两条<strong>并联</strong>的链路，各自独立，互为交叉验证。
+    </p>
+
+    <div class="diagram-box">
+      <svg viewBox="0 0 900 452" width="100%" role="img" xmlns="http://www.w3.org/2000/svg">
+        <title>上行数据的两条并联链路</title>
+        <desc>终端节点经 ZigBee 到协调器，协调器 P0_3 同时输出给板载 CH340（进 Ubuntu 的 gw）和飞线到 ESP32 GPIO18（转 MQTT）。Ubuntu 的 gw 提供网页，ESP32 把数据发到 broker。</desc>
+        <defs>
+          <marker id="ah" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M2 1L8 5L2 9" fill="none" stroke="context-stroke" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
+          </marker>
+        </defs>
+
+        <g font-family="-apple-system, 'PingFang SC', 'Microsoft YaHei', sans-serif">
+          <rect x="360" y="16" width="180" height="66" rx="10" fill="#f0fdfa" stroke="#0d9488" stroke-width="1.2"/>
+          <text x="450" y="42" text-anchor="middle" font-size="14.5" font-weight="600" fill="#0f766e">终端节点</text>
+          <text x="450" y="62" text-anchor="middle" font-size="12" fill="#475569">CC2530 · 电池供电</text>
+
+          <path d="M450 82L450 132" fill="none" stroke="#94a3b8" stroke-width="1.6" marker-end="url(#ah)"/>
+          <text x="458" y="112" font-size="11.5" fill="#94a3b8">ZigBee 2.4GHz 无线</text>
+
+          <rect x="360" y="134" width="180" height="66" rx="10" fill="#f0fdfa" stroke="#0d9488" stroke-width="1.2"/>
+          <text x="450" y="160" text-anchor="middle" font-size="14.5" font-weight="600" fill="#0f766e">协调器</text>
+          <text x="450" y="180" text-anchor="middle" font-size="12" fill="#475569">CC2530 · 只做汇聚</text>
+
+          <path d="M420 200L285 200L285 254" fill="none" stroke="#0d9488" stroke-width="1.6" marker-end="url(#ah)"/>
+          <path d="M480 200L615 200L615 254" fill="none" stroke="#4f46e5" stroke-width="1.6" marker-end="url(#ah)"/>
+
+          <text x="292" y="226" font-size="11.5" fill="#0f766e">P0_3 → 板载 CH340</text>
+          <text x="624" y="226" font-size="11.5" fill="#4338ca">P0_3 → 飞线 GPIO18</text>
+
+          <rect x="190" y="256" width="190" height="76" rx="10" fill="#ffffff" stroke="#0d9488" stroke-width="1.2"/>
+          <text x="285" y="281" text-anchor="middle" font-size="14" font-weight="600" fill="#1e293b">Ubuntu 虚拟机</text>
+          <text x="285" y="300" text-anchor="middle" font-size="11.5" fill="#475569">/dev/ttyUSB0</text>
+          <text x="285" y="318" text-anchor="middle" font-size="11.5" fill="#475569">跑 gw（C 服务端）</text>
+
+          <rect x="520" y="256" width="190" height="76" rx="10" fill="#ffffff" stroke="#4f46e5" stroke-width="1.2"/>
+          <text x="615" y="281" text-anchor="middle" font-size="14" font-weight="600" fill="#1e293b">ESP32-S3</text>
+          <text x="615" y="300" text-anchor="middle" font-size="11.5" fill="#475569">UART1 · GPIO18 收</text>
+          <text x="615" y="318" text-anchor="middle" font-size="11.5" fill="#475569">板载 OLED 状态屏</text>
+
+          <path d="M285 332L285 380" fill="none" stroke="#94a3b8" stroke-width="1.6" marker-end="url(#ah)"/>
+          <text x="292" y="360" font-size="11.5" fill="#94a3b8">HTTP :8080</text>
+
+          <path d="M615 332L615 380" fill="none" stroke="#94a3b8" stroke-width="1.6" marker-end="url(#ah)"/>
+          <text x="622" y="360" font-size="11.5" fill="#94a3b8">WiFi → MQTT</text>
+
+          <rect x="190" y="382" width="190" height="60" rx="10" fill="#f8fafc" stroke="#cbd5e1" stroke-width="1"/>
+          <text x="285" y="406" text-anchor="middle" font-size="13.5" font-weight="600" fill="#1e293b">浏览器</text>
+          <text x="285" y="425" text-anchor="middle" font-size="11.5" fill="#64748b">卡片 / 曲线 / 远控</text>
+
+          <rect x="520" y="382" width="190" height="60" rx="10" fill="#f8fafc" stroke="#cbd5e1" stroke-width="1"/>
+          <text x="615" y="406" text-anchor="middle" font-size="13.5" font-weight="600" fill="#1e293b">broker :1883</text>
+          <text x="615" y="425" text-anchor="middle" font-size="11.5" fill="#64748b">mqtt_sub 只做对账</text>
+        </g>
+      </svg>
+    </div>
+
+    <div class="diagram-legend">
+      <span><i style="border-top-color:#0d9488"></i>串口链路（网页的数据来源）</span>
+      <span><i style="border-top-color:#4f46e5"></i>MQTT 链路（旁路，交叉验证）</span>
+      <span><i style="border-top-color:#94a3b8"></i>内部传递（不经过任何线）</span>
+    </div>
+
+    <!-- ==================== 接线细则 ==================== -->
+    <div class="section-head" style="margin-top:34px">
+      <h3 style="font-size:15.5px;font-weight:650;margin:0;color:var(--text-soft)">实际要接的只有三根线</h3>
+      <span>协调器 P4 排针 → ESP32</span>
+    </div>
+
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>协调器</th>
+            <th>方向</th>
+            <th>ESP32-S3</th>
+            <th>作用</th>
+            <th>接错会怎样</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><code>P0_3</code></td>
+            <td>→</td>
+            <td><code>GPIO18</code></td>
+            <td>上行数据（24 字节帧）</td>
+            <td>没数据，<code>字节=0</code></td>
+          </tr>
+          <tr>
+            <td><code>P0_5</code></td>
+            <td>←</td>
+            <td><code>GPIO17</code></td>
+            <td>下行命令（继电器开关）</td>
+            <td>远控点了没反应，日志报「发送成功」但节点不动</td>
+          </tr>
+          <tr>
+            <td><code>GND</code></td>
+            <td>—</td>
+            <td><code>GND</code></td>
+            <td>共地</td>
+            <td>最容易忘的一根，表现为数据乱码或完全没有</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="callout" style="margin-top:18px">
+      <div class="callout-icon">!</div>
+      <div class="callout-body">
+        <strong>下行是 <code>P0_5</code>，不是 <code>P0_2</code>，也不是 <code>P0_4</code>。</strong>
+        协调器源码里 UART1 配在「备用位置 1」（<code>PERCFG.U1CFG=0</code>），这个位置是<strong>高脚收</strong>：
+        RX = <code>P0_5</code>、TX = <code>P0_4</code>，与 UART0（低脚收：RX=P0_2 / TX=P0_3）正好相反。
+        接 <code>P0_4</code> 等于接到协调器自己的发送脚上，一个字节都收不到；
+        接 <code>P0_2</code> 会撞上板载 CH340 的 TXD。
+      </div>
+    </div>
+
+    <!-- ==================== 五、控制链路 ==================== -->
+    <div class="section-head">
+      <h2>五、控制链路（反方向）</h2>
+      <span>从点击到"咔"一声</span>
+    </div>
+
+    <div class="diagram-box">
+      <svg viewBox="0 0 900 132" width="100%" role="img" xmlns="http://www.w3.org/2000/svg">
+        <title>远控命令下行的六段路径</title>
+        <desc>浏览器点击后依次经过 gw、MQTT broker、ESP32、协调器，最终到节点继电器。</desc>
+        <defs>
+          <marker id="ah2" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M2 1L8 5L2 9" fill="none" stroke="context-stroke" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
+          </marker>
+        </defs>
+        <g font-family="-apple-system, 'PingFang SC', 'Microsoft YaHei', sans-serif">
+          <rect x="16" y="38" width="118" height="56" rx="9" fill="#f8fafc" stroke="#cbd5e1" stroke-width="1"/>
+          <text x="75" y="62" text-anchor="middle" font-size="13" font-weight="600" fill="#1e293b">浏览器</text>
+          <text x="75" y="80" text-anchor="middle" font-size="11" fill="#64748b">点「吸合」</text>
+
+          <rect x="166" y="38" width="118" height="56" rx="9" fill="#f0fdfa" stroke="#0d9488" stroke-width="1.1"/>
+          <text x="225" y="62" text-anchor="middle" font-size="13" font-weight="600" fill="#0f766e">gw</text>
+          <text x="225" y="80" text-anchor="middle" font-size="11" fill="#475569">api/cmd</text>
+
+          <rect x="316" y="38" width="118" height="56" rx="9" fill="#f0fdfa" stroke="#0d9488" stroke-width="1.1"/>
+          <text x="375" y="62" text-anchor="middle" font-size="13" font-weight="600" fill="#0f766e">broker</text>
+          <text x="375" y="80" text-anchor="middle" font-size="11" fill="#475569">:1883</text>
+
+          <rect x="466" y="38" width="118" height="56" rx="9" fill="#eef2ff" stroke="#4f46e5" stroke-width="1.1"/>
+          <text x="525" y="62" text-anchor="middle" font-size="13" font-weight="600" fill="#4338ca">ESP32</text>
+          <text x="525" y="80" text-anchor="middle" font-size="11" fill="#475569">GPIO17 发</text>
+
+          <rect x="616" y="38" width="118" height="56" rx="9" fill="#f0fdfa" stroke="#0d9488" stroke-width="1.1"/>
+          <text x="675" y="62" text-anchor="middle" font-size="13" font-weight="600" fill="#0f766e">协调器</text>
+          <text x="675" y="80" text-anchor="middle" font-size="11" fill="#475569">P0_5 收</text>
+
+          <rect x="766" y="38" width="118" height="56" rx="9" fill="#fffbeb" stroke="#b45309" stroke-width="1.1"/>
+          <text x="825" y="62" text-anchor="middle" font-size="13" font-weight="600" fill="#b45309">节点</text>
+          <text x="825" y="80" text-anchor="middle" font-size="11" fill="#92400e">继电器"咔"</text>
+
+          <path d="M136 66L162 66" fill="none" stroke="#94a3b8" stroke-width="1.5" marker-end="url(#ah2)"/>
+          <path d="M286 66L312 66" fill="none" stroke="#94a3b8" stroke-width="1.5" marker-end="url(#ah2)"/>
+          <path d="M436 66L462 66" fill="none" stroke="#94a3b8" stroke-width="1.5" marker-end="url(#ah2)"/>
+          <path d="M586 66L612 66" fill="none" stroke="#94a3b8" stroke-width="1.5" marker-end="url(#ah2)"/>
+          <path d="M736 66L762 66" fill="none" stroke="#94a3b8" stroke-width="1.5" marker-end="url(#ah2)"/>
+
+          <text x="450" y="112" text-anchor="middle" font-size="11.5" fill="#94a3b8">实测延迟 1~2.6 秒 · 8 次命令 8 次命中</text>
+        </g>
+      </svg>
+    </div>
+
+    <!-- ==================== 六、实测数据 ==================== -->
+    <div class="section-head">
+      <h2>六、实测数据</h2>
+      <span>可对照，不是"效果很好"</span>
+    </div>
+
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>指标</th>
+            <th>实测值</th>
+            <th>怎么来的</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr><td>串口帧间隔</td><td><strong>1.000 帧/秒</strong></td><td>单进程 21 秒 21 帧</td></tr>
+          <tr><td>坏帧 / 残帧 / 重同步</td><td><strong>0 / 0 / 0</strong></td><td>稳定运行时统计行</td></tr>
+          <tr><td>帧数 vs 入库数</td><td><strong>192 / 192</strong></td><td>同一次运行，一帧没丢</td></tr>
+          <tr><td>离线断言</td><td><strong>230 项全过</strong></td><td><code>make test</code>，不需要任何硬件</td></tr>
+          <tr><td>双链路交叉验证</td><td><strong>904/904 吻合，冲突 0</strong></td><td><code>tools/xcheck_dual.py</code></td></tr>
+          <tr><td>远控命中率 / 延迟</td><td><strong>8/8 · 1~2.6 秒</strong></td><td>网页连点，看继电器动作</td></tr>
+          <tr><td>1 小时 / 24 小时曲线</td><td><strong>120 点 / 96 点</strong></td><td>30 秒 / 900 秒时间桶</td></tr>
+          <tr><td>ESP32 板载 OLED</td><td><strong>SSD1306 128×32 @0x3C 就绪</strong></td><td>串口 <code>I (457) OLED: 状态屏就绪</code></td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <!-- ==================== 七、技术栈 ==================== -->
+    <div class="section-head">
+      <h2>七、技术栈</h2>
       <span>按层次划分</span>
     </div>
 
@@ -270,7 +474,7 @@
           <tr>
             <td><strong>网关层</strong></td>
             <td>ESP32-S3 N16R8</td>
-            <td>ESP-IDF v5.5、UART 透传 24 字节定长帧、WiFi 状态机与延后重连、MQTT QoS1 + 遗嘱消息（LWT）</td>
+            <td>ESP-IDF v5.5、UART 定长帧解析、WiFi 状态机与延后重连、MQTT QoS1 + 遗嘱消息、I2C 状态屏</td>
           </tr>
           <tr>
             <td><strong>应用层</strong></td>
@@ -281,14 +485,151 @@
       </table>
     </div>
 
+    <!-- ==================== 八、开发手记 ==================== -->
+    <div class="section-head" id="logs">
+      <h2>八、开发手记</h2>
+      <span>按时间写的 10 篇</span>
+    </div>
+
+    <p style="font-size:14.5px;color:var(--text-soft);max-width:720px;margin:0 0 18px">
+      手记是先写的，记录的是当时的真实顺序，包括走错的那几版。
+      完整的索引（含日期和一句话摘要）在
+      <a href="../posts/">手记页</a>，这里只列最关键的几篇。
+    </p>
+
+    <div class="log-list">
+
+      <a class="log-item" href="../posts/week0-bringup.html">
+        <span class="log-when">第 0 周</span>
+        <span>
+          <span class="log-title">让 CC2530 跑起自己写的代码</span>
+          <span class="log-desc">IAR 版本、烧录器不认芯片、蜂鸣器长鸣、没有 hex、中文乱码——五个坑。</span>
+        </span>
+        <span class="log-go">阅读 →</span>
+      </a>
+
+      <a class="log-item" href="../posts/week1-sensors.html">
+        <span class="log-when">第 1 周</span>
+        <span>
+          <span class="log-title">五个传感器全部打通</span>
+          <span class="log-desc">真正花时间的只有 ADC 那两路，连续改错三次。</span>
+        </span>
+        <span class="log-go">阅读 →</span>
+      </a>
+
+      <a class="log-item" href="../posts/week2-network.html">
+        <span class="log-when">第 2 周</span>
+        <span>
+          <span class="log-title">ZigBee 组网，以及一个差点蒙混过关的设计错误</span>
+          <span class="log-desc">采集和上报绑在同一个定时器上，没连上就既不采也不显示。</span>
+        </span>
+        <span class="log-go">阅读 →</span>
+      </a>
+
+      <a class="log-item" href="../posts/week3-linux-gateway.html">
+        <span class="log-when">第 3 周</span>
+        <span>
+          <span class="log-title">Linux 网关，以及为什么网页不能直接查数据库</span>
+          <span class="log-desc">批量提交让「库里最新那条」永远落后 19 秒，所以实时数据必须走内存。</span>
+        </span>
+        <span class="log-go">阅读 →</span>
+      </a>
+
+      <a class="log-item" href="../posts/week4-smoke-alarm.html">
+        <span class="log-when">第 4 周</span>
+        <span>
+          <span class="log-title">烟雾告警，以及最容易写出「永远不报警」的那行代码</span>
+          <span class="log-desc">判定顺序写反，系统会永久沉默，而且和「一切正常」输出一模一样。</span>
+        </span>
+        <span class="log-go">阅读 →</span>
+      </a>
+
+      <a class="log-item" href="../posts/week5-esp32-bridge.html">
+        <span class="log-when">第 5 周</span>
+        <span>
+          <span class="log-title">ESP32 上云，以及「COM 口在」不等于「板子活着」</span>
+          <span class="log-desc">四个坑全和代码无关，全部出在环境与电路上。</span>
+        </span>
+        <span class="log-go">阅读 →</span>
+      </a>
+
+      <a class="log-item" href="../posts/week6-relay-remote.html">
+        <span class="log-when">第 6 周</span>
+        <span>
+          <span class="log-title">网页点一下，继电器就响——中间隔了三次翻车</span>
+          <span class="log-desc">广播 5/20 → 连发踢掉终端 → 单播 + 只补发 1 次，最后 8/8。</span>
+        </span>
+        <span class="log-go">阅读 →</span>
+      </a>
+
+      <a class="log-item" href="../posts/week7-trend-chart.html">
+        <span class="log-when">第 7 周</span>
+        <span>
+          <span class="log-title">历史曲线，以及被推翻两次的「串口丢帧」</span>
+          <span class="log-desc">真凶是 systemd 在后台跑着第二个网关，两个进程抢同一个 tty。</span>
+        </span>
+        <span class="log-go">阅读 →</span>
+      </a>
+
+    </div>
+
+    <p class="more-link">
+      <a href="../posts/">看全部 10 篇（含设计与参考资料）→</a>
+    </p>
+
+    <!-- ==================== 九、源码 ==================== -->
+    <div class="section-head">
+      <h2>九、源码与文档</h2>
+      <span>全部公开</span>
+    </div>
+
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>内容</th>
+            <th>位置</th>
+            <th>说明</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>Linux 网关</td>
+            <td><a href="../code/linux_gateway/">code/linux_gateway/</a></td>
+            <td>纯 C，无第三方框架；<code>make &amp;&amp; make test</code> 跑 230 项断言</td>
+          </tr>
+          <tr>
+            <td>ESP32 固件</td>
+            <td><a href="../code/esp32_bridge/">code/esp32_bridge/</a></td>
+            <td>ESP-IDF v5.5，含 OLED 状态屏与下行命令；<code>app_cfg.h</code> 是唯一要改的文件</td>
+          </tr>
+          <tr>
+            <td>全链路总账</td>
+            <td><a href="../FINAL-SPEC.md">FINAL-SPEC.md</a></td>
+            <td>定版 v1.0：接线、24 字节帧逐字段、故障对照表、一分钟自检</td>
+          </tr>
+          <tr>
+            <td>GitHub 仓库</td>
+            <td><a href="https://github.com/qikai-lab/qikai-lab.github.io">qikai-lab/qikai-lab.github.io</a></td>
+            <td>本站源码，Pages 部署</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="post-footer">
+      <a class="btn" href="index.html">← 全部项目</a>
+      <a class="btn btn-primary" href="../posts/">读开发手记 →</a>
+    </div>
+
   </div>
 
 </main>
 
 <footer class="site-footer">
   <div class="wrap-wide">
-    <span>qikai-lab · 项目手记 — ZigBee 无线环境监测系统</span>
-    <span>最近更新：2026-10-30</span>
+    <span>qikai-lab · ZigBee 无线环境监测系统</span>
+    <span>定版 v1.0 · 2026-10-30</span>
   </div>
 </footer>
 
