@@ -349,6 +349,55 @@ $ cat /proc/4083/cgroup
       </tbody>
     </table>
 
+    <p>
+      上面这些是假数据在浏览器里测的。真机跑起来是这样——节点板彩屏、ESP32、Ubuntu 终端、
+      网页，一条链走完，<strong>72 秒</strong>：
+    </p>
+
+    <figure>
+      <video controls preload="metadata" playsinline poster="../assets/img/trend-demo-poster.png">
+        <source src="../assets/video/trend-demo.mp4" type="video/mp4">
+        你的浏览器不支持 video 标签，可以直接
+        <a href="../assets/video/trend-demo.mp4">下载这段视频</a>。
+      </video>
+      <figcaption>
+        顺序是：终端节点板彩屏读出 <code>T:20.5℃ H:43.0% Lux:688 Gas:22</code> →
+        ESP32-S3 把串口帧转成 WiFi/MQTT → Ubuntu 终端逐帧打印 →
+        网页三张曲线加历史趋势。全程没有手动干预
+      </figcaption>
+    </figure>
+
+    <p>网页端的两张截图，正好能说明一件容易被误认为 bug 的事：</p>
+
+    <figure>
+      <img src="../assets/img/trend-page-cards.png" alt="网页顶部：温度、湿度、光照、烟雾四个数值卡片全部显示 --，已收到 0；但下方温度湿度曲线已经有完整的一条线，鼠标悬停气泡显示 10-30 17:08:39 温度 20.5°C 湿度 43.0%">
+      <figcaption>
+        注意上面四个卡片全是 <code>--</code>，下面的曲线却有线。
+        <strong>这不是 bug</strong>：卡片读的是<strong>内存快照</strong>（这个进程启动后收到的第一帧），
+        曲线读的是<strong>数据库</strong>。刚重启的那一秒，进程还没收到任何帧，
+        但库里几千条历史数据早就在了，所以「上面空、下面满」是正确的
+      </figcaption>
+    </figure>
+
+    <figure>
+      <img src="../assets/img/trend-page-trend.png" alt="网页下半部分：光照与烟雾双轴曲线、历史趋势区选中 1 小时并显示 58 个点，悬停气泡显示 10-30 16:42:00 温度 20.7°C 湿度 41.0%，趋势线中间断成四段；底部告警记录显示一次峰值 76、基线 23">
+      <figcaption>
+        历史趋势区选中 <code>1 小时</code>，右上 <code>58 点 · 每 30 秒一格</code>——满格应该是 120 点。
+        曲线<strong>断成四段</strong>，因为这段时间网关启停过好几次。
+        断口就是「相邻两点间隔超过 2.5 倍桶宽就断开」那条规则在起作用
+      </figcaption>
+    </figure>
+
+    <figure>
+      <img src="../assets/img/gw-terminal-1fps.png" alt="Ubuntu 终端截图，左侧是 VMware Workstation 17 Player 窗口标题栏，终端里逐秒打印网关输出：有效帧=192 坏帧=0 残帧=0 重同步=33B 入库=192 库错=0 重连=4，每帧温度 20.5C 湿度 43.0% 光照 688 烟雾 22">
+      <figcaption>
+        <code>有效帧=192 坏帧=0 残帧=0 入库=192 库错=0</code>——
+        帧数和入库数完全相等，一帧没丢。<br>
+        顺便，<strong>窗口标题栏泄露了一件事</strong>：这台「Ubuntu」是
+        <strong>VMware 虚拟机</strong>。这也是后面 CH340 为什么反复掉线的真正原因
+      </figcaption>
+    </figure>
+
     <h2 id="honest">七、诚实说明：24 小时视图现在画不满</h2>
 
     <p>
@@ -360,8 +409,58 @@ $ cat /proc/4083/cgroup
     <p>
       这不是 bug，恰恰是「断档不补 0」在起作用——
       <strong>系统不会用一条直线把没有数据的时间糊过去，它会把缺口如实画出来</strong>。
-      等哪天连续跑满一天，它自然就是连续的一条。
     </p>
+
+    <h3>那为什么跑不满？</h3>
+
+    <p>
+      我一直以为是自己换线换口没换对。直到某天看 <code>dmesg</code>，才发现真正的原因藏在
+      <code>usb 2-2.1</code> 这一行里——<strong>那台「Ubuntu」是 VMware 虚拟机</strong>，
+      CH340 是 USB 直通进去的。
+    </p>
+
+    <p>
+      直通设备会在宿主机和虚拟机之间被反复抢走，内核日志长这样：
+    </p>
+
+    <pre><code>[ 9112.040] ch341-uart converter now disconnected from ttyUSB0
+[ 9144.142] usb 2-2.1: new full-speed USB device number 32 using uhci_hcd
+[10943.287] usb 2-2.1: USB disconnect, device number 32
+[10947.374] usb 2-2.1: new full-speed USB device number 33 using uhci_hcd
+[10957.991] usb 2-2.1: USB disconnect, device number 33</code></pre>
+
+    <p>
+      两件事值得注意。第一，<code>uhci_hcd</code> 是 <strong>USB 1.1</strong> 控制器，
+      物理机早就用 <code>ehci</code> / <code>xhci</code> 了，出现它基本就是虚拟机的默认配置。
+      第二，device number 从 32 涨到 33——<strong>每次掉线都是真正的重新枚举</strong>，
+      不是驱动状态错乱。而且间隔在缩短：上上次挂住 13 分钟，上一次只挂住 <strong>11 秒</strong>。
+    </p>
+
+    <p>
+      所以这条链路的瓶颈从来不在代码，也不在 USB 线，在虚拟机的 USB 直通。
+      真要跑 24 小时，第一步得先把 USB 控制器从 1.1 改成 EHCI/xHCI，
+      再给 <code>1a86:7523</code> 加一条固定的设备过滤规则——否则每次重枚举，
+      宿主机都可能把它抢回去。
+    </p>
+
+    <p>
+      <strong>这也解释了那个追了两天的「0.33 帧/秒」。</strong>
+      当时系统里还跑着一个 <code>Restart=always</code> 的 systemd 服务，和手动启动的网关
+      抢同一个 tty；掉线一次，两个进程各自拿着半截字节流，谁都拼不出完整帧。
+      把假主因（CH340 掉线）当真，把真主因（双进程抢串口）漏掉，
+      是这个项目里代价最大的一次误判。
+    </p>
+
+    <div class="callout info">
+      <div class="callout-icon">!</div>
+      <div class="callout-body">
+        <strong>一个方法论上的教训：</strong>
+        <code>dmesg</code> 能告诉你「设备掉了」，但不会告诉你「是谁在跟它抢」。
+        排查硬件问题时，日志只能证伪，不能直接指认凶手——
+        要定位到具体进程，得看 <code>cat /proc/&lt;pid&gt;/cgroup</code>、
+        <code>fuser -v</code>、<code>ss -ltnp</code> 这些「谁占着」的工具。
+      </div>
+    </div>
 
     <h2 id="next">八、还剩什么</h2>
 
