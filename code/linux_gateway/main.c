@@ -439,7 +439,8 @@ int main(int argc, char *argv[])
         if (!print_lan_ip(http_srv_port(hs))) {
             printf(" 网页   : http://localhost:%d/\n", http_srv_port(hs));
         }
-        printf(" 接口   : /api/latest  /api/history?limit=60  /api/stats\n");
+        printf(" 接口   : /api/latest  /api/history  /api/trend  /api/stats\n");
+        printf("          /api/alarms  /api/cmd\n");
     }
     printf(" 退出   : Ctrl+C\n");
     printf("----------------------------------------\n");

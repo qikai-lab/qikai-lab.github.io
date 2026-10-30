@@ -81,8 +81,13 @@ def main():
 
     print("已生成 %s" % OUT)
     print("  HTML %d 字节 -> C 数组约 %d 行" % (n, (n + PER_LINE - 1) // PER_LINE))
-    if n > 14000:
-        print("  [警告] HTML 超过 14KB，接近 HTTP_RESP_MAX(16384)，考虑精简")
+    # 网页是 memcpy 进 g_body（HTTP_RESP_MAX 字节）再发的，超了就发不全。
+    # 留 2KB 余量给以后加东西，别每次都踩着上限改。
+    if n > 30768:
+        print("  [错误] HTML 超过 30768 字节，会超出 HTTP_RESP_MAX(32768)，页面会被截断")
+        return 2
+    if n > 28000:
+        print("  [警告] HTML 已到 %d 字节，HTTP_RESP_MAX=32768，余量不足 5KB" % n)
     return 0
 
 

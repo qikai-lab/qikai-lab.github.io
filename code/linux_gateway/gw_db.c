@@ -335,6 +335,86 @@ int gw_db_recent(gw_db_t *db, int limit, int node, gw_row_t *out, int max)
 }
 
 /*------------------------------------------------------------------------------
+ * 历史趋势：SQL 里按时间桶聚合
+ *
+ * SQL 讲解（这段是整个模块最值得看的地方）
+ * ----------------------------------------
+ *   (ts / ?1) * ?1      整数除法把 ts 向下取整到桶边界，再乘回去得到桶起点。
+ *                       30 秒桶时 1793431237 → 1793431230。
+ *                       用整数除法而不是 strftime('%s') 之类，是因为它**不需要
+ *                       解析日期**，纯整数运算，8 万行也就几毫秒。
+ *
+ *   COUNT(*)            桶里有多少帧。这个数是「掉线体检指标」——
+ *                       正常 30 秒桶应该有 30 帧左右，掉到 5 就是那段时间串口挂了。
+ *
+ *   AVG / MIN / MAX     平均画曲线、最小值最大值画波动、MAX(gas) 看烟雾尖峰。
+ *                       烟雾**不能只看平均**：烧一张纸只持续 3 秒，在 900 秒的
+ *                       桶里平均下来几乎不变，但峰值会跳到 300+。告警看的是峰值。
+ *
+ *   SUM(pir)            桶里「有人」的帧数。0 = 这段时间一直没人。
+ *
+ * 为什么 AVG 要四舍五入而不是直接 (int) 强转
+ * -----------------------------------------
+ *   SQLite 的 AVG 返回 REAL。直接 cast 是**截断**，21.9 变成 21，
+ *   整条曲线会系统性偏低 0.05 度。曲线是给人看趋势的，系统性偏差最忌讳。
+ *----------------------------------------------------------------------------*/
+static int rnd_i(double v)
+{
+    return (int)((v >= 0.0) ? (v + 0.5) : (v - 0.5));
+}
+
+int gw_db_trend(gw_db_t *db, int64_t from_ts, int64_t to_ts, int bucket_sec,
+                int node, gw_trend_t *out, int max)
+{
+    static const char *SQL =
+        "SELECT (ts/?1)*?1 AS b, COUNT(*), AVG(temp_x10), AVG(hum_x10),"
+        " MIN(temp_x10), MAX(temp_x10), AVG(lux), AVG(gas), MAX(gas), SUM(pir)"
+        " FROM env_data"
+        " WHERE ts >= ?2 AND ts <= ?3 AND (?4 = 0 OR node = ?4)"
+        " GROUP BY b ORDER BY b ASC LIMIT ?5;";
+
+    sqlite3_stmt *st = NULL;
+    int           n  = 0;
+
+    if (db == NULL || db->h == NULL || out == NULL || max <= 0) {
+        return -1;
+    }
+    if (bucket_sec <= 0) {
+        bucket_sec = 60;
+    }
+    if (to_ts < from_ts) {
+        return 0;
+    }
+
+    if (sqlite3_prepare_v2(db->h, SQL, -1, &st, NULL) != SQLITE_OK) {
+        set_err(db, "prepare trend");
+        return -1;
+    }
+    sqlite3_bind_int(st, 1, bucket_sec);
+    sqlite3_bind_int64(st, 2, from_ts);
+    sqlite3_bind_int64(st, 3, to_ts);
+    sqlite3_bind_int(st, 4, node);
+    sqlite3_bind_int(st, 5, max);
+
+    while ((sqlite3_step(st) == SQLITE_ROW) && (n < max)) {
+        out[n].ts        = sqlite3_column_int64(st, 0);
+        out[n].n         = sqlite3_column_int(st, 1);
+        out[n].temp_x10  = rnd_i(sqlite3_column_double(st, 2));
+        out[n].hum_x10   = rnd_i(sqlite3_column_double(st, 3));
+        out[n].tmin_x10  = sqlite3_column_int(st, 4);
+        out[n].tmax_x10  = sqlite3_column_int(st, 5);
+        out[n].lux       = rnd_i(sqlite3_column_double(st, 6));
+        out[n].gas       = rnd_i(sqlite3_column_double(st, 7));
+        out[n].gas_max   = sqlite3_column_int(st, 8);
+        out[n].pir       = sqlite3_column_int(st, 9);
+        n++;
+    }
+    sqlite3_finalize(st);
+
+    return n;
+}
+
+/*------------------------------------------------------------------------------
  * M4：告警事件
  *
  * 全部不复用预处理语句 —— 告警是稀有事件（一天几次），

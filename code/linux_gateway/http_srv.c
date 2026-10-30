@@ -196,6 +196,106 @@ static size_t body_history(http_srv_t *s, int limit, int node, char *out, size_t
     return off;
 }
 
+/**
+ * @brief 按窗口长度选桶宽：让点数固定在 96~120 之间
+ *
+ * 为什么点数要固定
+ * ----------------
+ *   24 小时 1 帧/秒 = 86400 个原始点。全发给浏览器：响应 9MB、页面卡死。
+ *   固定成 ~120 个点，1h 和 24h 的响应体都是 13KB 左右，
+ *   前端不用管「这次有多少点」，绘图代码一套就够。
+ *
+ *   1h  →  30 秒一桶 → 120 点（够平滑，掉几帧看不出来）
+ *   6h  → 180 秒一桶 → 120 点
+ *   24h → 900 秒一桶 →  96 点（15 分钟一桶，"整齐"，人说时间也用这个粒度）
+ */
+static int bucket_for(int64_t win)
+{
+    if (win <= 3600) {
+        return 30;
+    }
+    if (win <= 6 * 3600) {
+        return 180;
+    }
+    if (win <= 24 * 3600) {
+        return 900;
+    }
+    return (int)(win / 120);        /* 更大的窗口按 120 点均分 */
+}
+
+/**
+ * /api/trend?range=1h|24h&node=0 —— 趋势曲线（页面下半部分那张图）
+ *
+ * 和 /api/history 的分工
+ * ----------------------
+ *   history = 最近 N 条**原始行**，N 最大 120。1 帧/秒时只够 2 分钟，
+ *             适合画「刚才这半分钟」的细节抖动。
+ *   trend   = 固定点数 + 任意时间窗，靠 SQL 分桶聚合。适合画 1 小时、
+ *             一天的走势 —— 这时候人根本不关心某一秒跳了多少。
+ *
+ * 返回字段里特意带上 bucket 和 n（每桶帧数）：
+ *   bucket 让前端知道「相邻两点差多少秒算正常」，用来判断要不要断线；
+ *   n      是掉线体检指标 —— 30 秒桶正常 30 帧，某个桶只有 3 帧
+ *          就说明那 30 秒里串口几乎没数据（CH340 掉线就是这样）。
+ */
+static size_t body_trend(http_srv_t *s, int64_t win, int node, char *out, size_t cap)
+{
+    static gw_trend_t rows[128];
+    int               bucket = bucket_for(win);
+    int64_t           now    = (int64_t)time(NULL);
+    /* 窗口对齐到桶边界，让点数正好等于 win/bucket。
+     *
+     * 不对齐的话：闭区间 [now-win, now] 会跨 **121** 个桶
+     * （120 个整桶 + 两端各半个）。点数多一个不影响画图，
+     * 但"120 点"这个说法就变成"121 还是 120 看运气"，测试和文档都说不准。
+     * 这里把右端挪到当前桶的最后一秒，左端跟着推，桶数就恒定了。
+     * to 会落到未来几十秒，但 SQL 是 ts <= to，未来的行本来就不存在，无害。 */
+    int64_t           to     = (now / bucket) * bucket + bucket - 1;
+    int64_t           from   = to - win + 1;
+    int               n;
+    int               i;
+    size_t            off = 0;
+
+    if (s->db == NULL) {
+        js(out, cap, &off,
+           "{\"ok\":1,\"range\":%lld,\"bucket\":%d,\"from\":%lld,\"to\":%lld,"
+           "\"count\":0,\"items\":[]}",
+           (long long)win, bucket, (long long)from, (long long)to);
+        return off;
+    }
+
+    n = gw_db_trend(s->db, from, to, bucket, node, rows, 128);
+    if (n < 0) {
+        js(out, cap, &off, "{\"ok\":0,\"err\":\"db\"}");
+        return off;
+    }
+
+    js(out, cap, &off,
+       "{\"ok\":1,\"range\":%lld,\"bucket\":%d,\"from\":%lld,\"to\":%lld,"
+       "\"count\":%d,\"items\":[",
+       (long long)win, bucket, (long long)from, (long long)to, n);
+
+    for (i = 0; i < n; i++) {
+        if (i > 0) {
+            js(out, cap, &off, ",");
+        }
+        js(out, cap, &off, "{\"t\":%lld,\"n\":%d,\"temp\":",
+           (long long)rows[i].ts, rows[i].n);
+        js_x10(out, cap, &off, rows[i].temp_x10);
+        js(out, cap, &off, ",\"hum\":");
+        js_x10(out, cap, &off, rows[i].hum_x10);
+        js(out, cap, &off, ",\"tmin\":");
+        js_x10(out, cap, &off, rows[i].tmin_x10);
+        js(out, cap, &off, ",\"tmax\":");
+        js_x10(out, cap, &off, rows[i].tmax_x10);
+        js(out, cap, &off, ",\"lux\":%d,\"gas\":%d,\"gmax\":%d,\"pir\":%d}",
+           rows[i].lux, rows[i].gas, rows[i].gas_max, rows[i].pir);
+    }
+    js(out, cap, &off, "]}");
+
+    return off;
+}
+
 /** /api/stats —— 运行统计，用来判断"是卡住了还是没数据" */
 static size_t body_stats(http_srv_t *s, char *out, size_t cap)
 {
@@ -333,6 +433,65 @@ static int qs_int(const char *path, const char *key, int dflt)
         q = amp + 1;
     }
     return dflt;
+}
+
+/**
+ * @brief 解析 ?range=1h / 24h / 3600 → 秒数
+ * @return 秒数；参数缺失或认不出返回 0（调用方自己决定默认值）
+ *
+ * 为什么用 "1h" 这种写法而不是直接传 3600
+ * --------------------------------------
+ *   curl 和浏览器地址栏里要能一眼看出「看的是哪一段」。
+ *   写 range=3600 得先心算，写 range=1h 不用。
+ *   纯数字也接受（3600 等价于 1h），临时想试 90 分钟就传 5400。
+ */
+static int64_t qs_range(const char *path, const char *key)
+{
+    const char *q = strchr(path, '?');
+    size_t      klen;
+
+    if (q == NULL) {
+        return 0;
+    }
+    q++;
+    klen = strlen(key);
+
+    while (*q != '\0') {
+        const char *amp = strchr(q, '&');
+        size_t      seg = (amp != NULL) ? (size_t)(amp - q) : strlen(q);
+
+        if (seg > klen && strncmp(q, key, klen) == 0 && q[klen] == '=') {
+            const char *p = q + klen + 1;
+            const char *e = q + seg;
+            int64_t     v = 0;
+
+            while (p < e && *p >= '0' && *p <= '9') {
+                v = v * 10 + (*p - '0');
+                p++;
+                if (v > 100000000LL) {
+                    return 0;       /* 防溢出，也防有人传一长串数字 */
+                }
+            }
+            if (v <= 0) {
+                return 0;
+            }
+            if (p < e) {
+                if (*p == 'h' || *p == 'H') {
+                    v *= 3600;
+                } else if (*p == 'm' || *p == 'M') {
+                    v *= 60;
+                } else if (*p == 'd' || *p == 'D') {
+                    v *= 86400;
+                }
+            }
+            return v;
+        }
+        if (amp == NULL) {
+            break;
+        }
+        q = amp + 1;
+    }
+    return 0;
 }
 
 /*------------------------------------------------------------------------------
@@ -482,6 +641,18 @@ static size_t build_response(http_srv_t *s, const char *path, char *out, size_t 
             limit = 120;        /* 再大就超响应缓冲了，看更长趋势要用降采样 */
         }
         blen = body_history(s, limit, node, g_body, sizeof(g_body));
+    } else if (PATH_IS("/api/trend")) {
+        /* 历史趋势（1h / 24h 曲线）：range=1h | 24h | 3600，缺省 1h */
+        int64_t win  = qs_range(path, "range");
+        int     node = qs_int(path, "node", 0);
+
+        if (win <= 0) {
+            win = 3600;
+        }
+        if (win > 7 * 86400) {
+            win = 7 * 86400;    /* 再大就是扫全表，单线程下会把采集卡住 */
+        }
+        blen = body_trend(s, win, node, g_body, sizeof(g_body));
     } else if (PATH_IS("/api/stats")) {
         blen = body_stats(s, g_body, sizeof(g_body));
     } else if (PATH_IS("/api/alarms")) {

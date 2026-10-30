@@ -43,7 +43,17 @@ h1{font-size:18px;font-weight:600;letter-spacing:.5px}
 section.chart{margin-top:14px;background:#151c24;border:1px solid #212b36;border-radius:8px;padding:10px 12px}
 section.chart h2{font-size:12px;font-weight:500;color:#8b949e;margin-bottom:6px;display:flex;gap:14px}
 section.chart h2 em{font-style:normal}
-canvas{display:block;width:100%;height:110px}
+/* 画布高度从 110 加到 140/170：底下要留一行画时间刻度，
+   而且刻度标签必须和 Y 轴最低档错开，不能挤在同一条线上 */
+canvas{display:block;width:100%;height:140px}
+canvas.tall{height:170px}
+/* 1h / 24h 切换。用胶囊按钮而不是 tab：只有两个互斥选项，
+   点一下就到，比"先展开再选"少一步。margin-left:-6px 是抵消 h2 的 gap */
+.tg{margin-left:-6px;padding:2px 9px;border-radius:9px;border:1px solid #2b3540;
+  background:#1c2530;color:#8b949e;font:500 11px/1.5 inherit;cursor:pointer}
+.tg:hover{background:#243040}
+.tg.on{border-color:#2ea043;color:#56d364;background:rgba(46,160,67,.14)}
+#tinfo{margin-left:auto;color:#484f58;font-size:11px}
 .leg{display:inline-flex;align-items:center;gap:4px}
 .leg:before{content:"";width:10px;height:2px;background:currentColor}
 /* 远程控制区（第 5 步）。放在数据下面、曲线上面：
@@ -113,6 +123,19 @@ footer{margin-top:14px;font-size:11px;color:#484f58;text-align:center}
   <canvas id="c2"></canvas>
 </section>
 
+<!-- 历史趋势：上面两张图是「最近 60 条原始帧」（约 2 分钟），
+     看的是抖动；这张是「按时间桶聚合」（1 小时 / 24 小时），看的是走势。
+     数据来自 /api/trend，30 秒才拉一次 —— 一次 13KB，跟着 2 秒轮询刷
+     会把带宽和 SQL 都浪费掉，而 1 小时窗口少刷新几秒根本看不出来。 -->
+<section class="chart">
+  <h2>历史趋势
+    <button type="button" class="tg on" data-h="1">1 小时</button>
+    <button type="button" class="tg" data-h="24">24 小时</button>
+    <em id="tinfo">读取中…</em>
+  </h2>
+  <canvas id="c3" class="tall"></canvas>
+</section>
+
 <section class="chart">
   <h2>告警记录 <em style="color:#484f58;font-weight:400">最近 10 次 · 阈值 基线×2.5</em></h2>
   <ul class="alist" id="alist"><li class="empty">暂无告警</li></ul>
@@ -135,54 +158,169 @@ function axisRange(vals, minSpan) {
   return [mn - pad, mx + pad];
 }
 
-/* 一条线 */
-function line(g, pts, color, W, H, pad, lo, hi) {
-  if (pts.length < 2) return;
-  var iw = W - pad.l - pad.r, ih = H - pad.t - pad.b;
-  var span = (hi - lo) || 1;
-  g.beginPath();
-  g.strokeStyle = color;
-  g.lineWidth = 1.6;
-  g.lineJoin = 'round';
-  for (var i = 0; i < pts.length; i++) {
-    var x = pad.l + iw * i / (pts.length - 1);
-    var y = pad.t + ih * (1 - (pts[i] - lo) / span);
-    if (i === 0) g.moveTo(x, y); else g.lineTo(x, y);
-  }
-  g.stroke();
-  /* 末点画个圆，一眼看到"最新在哪" */
-  var lx = pad.l + iw, ly = pad.t + ih * (1 - (pts[pts.length - 1] - lo) / span);
-  g.beginPath(); g.arc(lx, ly, 2.6, 0, 6.2832); g.fillStyle = color; g.fill();
+/* 轴刻度取值：跨度不到 8 度时留 1 位小数，
+   否则温度 23.1~23.9 会标成 "23 23 24 24"，等于没标 */
+function fmtA(v, span) { return span < 8 ? v.toFixed(1) : String(Math.round(v)); }
+
+function p2(v) { return (v < 10 ? '0' : '') + v; }
+
+/* X 轴时间标签。根据跨度自动换精度，否则 60 秒的窗口会标出
+   "16:20 16:20 16:20 16:21" —— 三个刻度长得一样，等于没标。
+     跨度 < 3 分钟 → 带秒
+     < 8 小时     → 时分
+     >= 8 小时    → 月-日 时分（24 小时视图会跨天，不写日期分不清是哪天） */
+function tlab(ts, span) {
+  var d = new Date(ts * 1000);
+  var hm = p2(d.getHours()) + ':' + p2(d.getMinutes());
+  if (span > 8 * 3600) return p2(d.getMonth() + 1) + '-' + p2(d.getDate()) + ' ' + hm;
+  return span < 180 ? hm + ':' + p2(d.getSeconds()) : hm;
 }
 
-function drawChart(cv, s1, s2, minSpan1, minSpan2) {
+/* 画一张图：双 Y 轴 + X 轴时间刻度 + 悬停读数。
+ * 左右各一根 Y 轴：温度湿度量纲不同，共用一根轴刻度就没意义了，
+ * 数字颜色跟线条颜色走，一眼对上是哪条线的。
+ * X 按真实时间定位，不按数组下标：按下标画的话掉线 5 分钟和掉线 5 秒
+ * 看起来一样宽，曲线会"假装连续"；按时间画再配合 2.5 倍桶宽断线，
+ * 缺口实实在在断在那里。
+ * opt: { ts, bucket, l1,l2:名称, u1,u2:单位, d1,d2:小数位, empty:无数据文案 } */
+function drawChart(cv, s1, s2, minSpan1, minSpan2, opt) {
+  opt = opt || {};
+  var ts = opt.ts || [], bk = opt.bucket || 0;
   var dpr = window.devicePixelRatio || 1;
   var rect = cv.getBoundingClientRect();
   if (rect.width < 10) return;
-  cv.width = rect.width * dpr; cv.height = rect.height * dpr;
+  cv.width = rect.width * dpr;
+  cv.height = rect.height * dpr;
   var g = cv.getContext('2d');
   g.setTransform(dpr, 0, 0, dpr, 0, 0);
 
-  var W = rect.width, H = rect.height, pad = { l: 4, r: 6, t: 6, b: 6 };
-  g.clearRect(0, 0, W, H);
+  var W = rect.width, H = rect.height;
+  var has2 = !!(s2 && s2.data.length > 1);
+  var pad = { l: 34, r: has2 ? 34 : 8, t: 8, b: 26 };
+  var iw = W - pad.l - pad.r, ih = H - pad.t - pad.b;
+  var n = s1.data.length;
+  var t0 = 0, t1 = 1;
+  if (ts.length === n && n > 1) { t0 = ts[0]; t1 = ts[n - 1]; }
 
-  /* 横向网格 */
-  g.strokeStyle = '#1e2833'; g.lineWidth = 1;
-  for (var i = 0; i <= 3; i++) {
-    var y = pad.t + (H - pad.t - pad.b) * i / 3;
-    g.beginPath(); g.moveTo(pad.l, y); g.lineTo(W - pad.r, y); g.stroke();
+  function xOf(i) {
+    if (ts.length === n && n > 1 && t1 > t0) return pad.l + iw * (ts[i] - t0) / (t1 - t0);
+    return pad.l + (n > 1 ? iw * i / (n - 1) : 0);
   }
 
-  if (s1.data.length < 2) {
-    g.fillStyle = '#484f58'; g.font = '11px sans-serif';
-    g.fillText('等待数据…', pad.l + 8, H / 2);
-    return;
+  function plot(hx) {
+    g.clearRect(0, 0, W, H);
+    g.font = '10px sans-serif';
+
+    if (n < 2) {
+      g.fillStyle = '#484f58'; g.textAlign = 'left'; g.textBaseline = 'top';
+      g.fillText(opt.empty || '等待数据…', pad.l + 4, pad.t + 6);
+      return;
+    }
+
+    var r1 = axisRange(s1.data, minSpan1);
+    var r2 = has2 ? axisRange(s2.data, minSpan2) : [0, 1];
+    var sp1 = r1[1] - r1[0], sp2 = (r2[1] - r2[0]) || 1;
+
+    /* 网格 + 左 Y 轴（第一条线）+ 右 Y 轴（第二条线） */
+    for (var i = 0; i <= 3; i++) {
+      var y = pad.t + ih * (1 - i / 3);
+      g.strokeStyle = '#1e2833'; g.lineWidth = 1;
+      g.beginPath(); g.moveTo(pad.l, y); g.lineTo(W - pad.r, y); g.stroke();
+
+      g.fillStyle = s1.color; g.textAlign = 'right'; g.textBaseline = 'middle';
+      g.fillText(fmtA(r1[0] + sp1 * i / 3, sp1), pad.l - 5, y);
+      if (has2) {
+        g.fillStyle = s2.color; g.textAlign = 'left';
+        g.fillText(fmtA(r2[0] + sp2 * i / 3, sp2), W - pad.r + 5, y);
+      }
+    }
+
+    /* X 轴时间刻度：刻度位置直接由 t0~t1 线性插值算出来，
+       和点的 x 位置用的是同一套映射，天然对齐。
+       固定画在离底边 13px 的一行上 —— Y 轴最低那档刻度在 y=H-26 附近，
+       两者必须错开，否则左下角糊成一团（第一版就是糊的） */
+    var tsp = t1 - t0, ty = H - 13;
+    g.fillStyle = '#6e7681'; g.textBaseline = 'top';
+    for (var j = 0; j <= 3; j++) {
+      g.textAlign = (j === 0) ? 'left' : (j === 3 ? 'right' : 'center');
+      g.fillText(ts.length === n ? tlab(t0 + tsp * j / 3, tsp) : '',
+                 pad.l + iw * j / 3, ty);
+    }
+
+    function stroke(d, rng, color) {
+      if (!d || d.data.length < 2) return;
+      var lo = rng[0], sp = (rng[1] - rng[0]) || 1, start = true;
+      g.beginPath(); g.strokeStyle = color; g.lineWidth = 1.6; g.lineJoin = 'round';
+      for (var k = 0; k < d.data.length; k++) {
+        var px = xOf(k), py = pad.t + ih * (1 - (d.data[k] - lo) / sp);
+        var gap = k > 0 && bk > 0 && ts.length === d.data.length &&
+                  (ts[k] - ts[k - 1]) > bk * 2.5;
+        if (start || gap) { g.moveTo(px, py); start = false; } else { g.lineTo(px, py); }
+      }
+      g.stroke();
+    }
+    stroke(s1, r1, s1.color);
+    stroke(s2, r2, s2.color);
+
+    if (hx == null) return;
+
+    /* 悬停：取横坐标最近的那个点。不按"到曲线的垂直距离"找 ——
+       那样斜线附近很难命中，鼠标得贴着线才出数，很难用。 */
+    var bi = 0, bd = 1e9;
+    for (var m = 0; m < n; m++) {
+      var dd = Math.abs(xOf(m) - hx);
+      if (dd < bd) { bd = dd; bi = m; }
+    }
+    var cx = xOf(bi);
+    g.strokeStyle = 'rgba(139,148,158,.55)'; g.lineWidth = 1;
+    g.beginPath(); g.moveTo(cx, pad.t); g.lineTo(cx, pad.t + ih); g.stroke();
+
+    function dot(v, rng, color) {
+      var py = pad.t + ih * (1 - (v - rng[0]) / ((rng[1] - rng[0]) || 1));
+      g.beginPath(); g.arc(cx, py, 3, 0, 6.2832);
+      g.fillStyle = color; g.fill();
+    }
+    dot(s1.data[bi], r1, s1.color);
+    if (has2) dot(s2.data[bi], r2, s2.color);
+
+    /* 读数气泡用 canvas 画，不用绝对定位的 div：
+       省一个 DOM 节点和一段 CSS，而这个页面离响应缓冲上限本来就不远 */
+    var l1 = (opt.l1 || '') + ' ' + s1.data[bi].toFixed(opt.d1 || 0) + (opt.u1 || '');
+    var l2 = has2 ? (opt.l2 || '') + ' ' + s2.data[bi].toFixed(opt.d2 || 0) + (opt.u2 || '') : '';
+    var bw = 106, bh = l2 ? 45 : 30;
+    var bx = cx + 10;
+    if (bx + bw > W) bx = cx - bw - 10;
+    if (bx < 0) bx = 0;
+    var by = pad.t + 2;
+    if (by + bh > H) by = H - bh;
+
+    g.fillStyle = 'rgba(10,14,19,.95)';
+    g.fillRect(bx, by, bw, bh);
+    g.strokeStyle = '#30363d'; g.lineWidth = 1;
+    g.strokeRect(bx + .5, by + .5, bw - 1, bh - 1);
+
+    g.textAlign = 'left'; g.textBaseline = 'top';
+    g.fillStyle = '#8b949e';
+    g.fillText(ts.length === n ? hhmmss(ts[bi]) : '', bx + 6, by + 3);
+    g.fillStyle = s1.color;
+    g.fillText(l1, bx + 6, by + (l2 ? 17 : 15));
+    if (l2) { g.fillStyle = s2.color; g.fillText(l2, bx + 6, by + 30); }
   }
 
-  var r1 = axisRange(s1.data, minSpan1);
-  var r2 = axisRange(s2.data, minSpan2);
-  line(g, s1.data, s1.color, W, H, pad, r1[0], r1[1]);
-  line(g, s2.data, s2.color, W, H, pad, r2[0], r2[1]);
+  cv._draw = plot;
+  plot(null);
+}
+
+/* 悬停监听只绑一次：每 2 秒重绘换的是 cv._draw，不是这些监听器。
+   绑在重绘里会越绑越多，几分钟后 mousemove 触发几十次重绘。 */
+function bindHover(cv) {
+  function at(e) {
+    var r = cv.getBoundingClientRect();
+    return (e.touches ? e.touches[0].clientX : e.clientX) - r.left;
+  }
+  cv.addEventListener('mousemove', function (e) { if (cv._draw) cv._draw(at(e)); });
+  cv.addEventListener('mouseleave', function () { if (cv._draw) cv._draw(null); });
+  cv.addEventListener('touchstart', function (e) { if (cv._draw) cv._draw(at(e)); });
 }
 
 function render(l) {
@@ -234,10 +372,9 @@ function render(l) {
   }
 }
 
-/* 告警列表：时间是 "MM-DD HH:MM:SS"，时长秒转成人看得懂的写法 */
+/* 告警列表 / 悬停气泡用：时间是 "MM-DD HH:MM:SS"，时长秒转成人看得懂的写法 */
 function hhmmss(ts) {
   var d = new Date(ts * 1000);
-  function p2(v) { return (v < 10 ? '0' : '') + v; }
   return p2(d.getMonth() + 1) + '-' + p2(d.getDate()) + ' '
        + p2(d.getHours()) + ':' + p2(d.getMinutes()) + ':' + p2(d.getSeconds());
 }
@@ -266,15 +403,68 @@ function renderAlarms(list) {
 }
 
 function renderCharts(items) {
-  var t = [], h = [], x = [], gs = [];
+  var t = [], h = [], x = [], gs = [], ts = [];
   for (var i = 0; i < items.length; i++) {
     t.push(items[i].temp);
     h.push(items[i].hum);
     x.push(items[i].lux * 100 / 1023);
     gs.push(items[i].gas);
+    ts.push(items[i].ts);
   }
-  drawChart($('c1'), { data: t, color: '#ff7b72' }, { data: h, color: '#58a6ff' }, 4, 10);
-  drawChart($('c2'), { data: x, color: '#f2cc60' }, { data: gs, color: '#7ee787' }, 20, 20);
+  drawChart($('c1'), { data: t, color: '#ff7b72' }, { data: h, color: '#58a6ff' }, 4, 10,
+            { ts: ts, l1: '温度', u1: '°C', d1: 1, l2: '湿度', u2: '%', d2: 1 });
+  drawChart($('c2'), { data: x, color: '#f2cc60' }, { data: gs, color: '#7ee787' }, 20, 20,
+            { ts: ts, l1: '光照', u1: '%', d1: 0, l2: '烟雾', u2: '', d2: 0 });
+}
+
+/* 历史趋势：c1/c2 是最近 60 条原始帧（看抖动），c3 是按时间桶聚合
+ * （看走势；1 小时和 24 小时都是 96~120 个点，点数不随窗口变）。
+ * 30 秒才拉一次：一次响应约 13KB，跟着 2 秒轮询刷等于每分钟白拉 400KB，
+ * 而且每 2 秒跑一次 GROUP BY 会跟采集抢 SQLite。 */
+var trend = { h: 1, items: [], bucket: 0 };
+
+function renderTrend() {
+  var it = trend.items, T = [], H = [], ts = [];
+  for (var i = 0; i < it.length; i++) {
+    T.push(it[i].temp); H.push(it[i].hum); ts.push(it[i].t);
+  }
+  drawChart($('c3'), { data: T, color: '#ff7b72' }, { data: H, color: '#58a6ff' }, 4, 10,
+            { ts: ts, bucket: trend.bucket,
+              l1: '温度', u1: '°C', d1: 1, l2: '湿度', u2: '%', d2: 1,
+              /* 数据不够时**不画一条假线**：24 小时窗口在刚部署时必然没数据，
+                 画成一条平的直线会被当成"温度一直恒定" */
+              empty: '这段时间没有数据（库里还没攒够 ' + trend.h + ' 小时，或串口断了）' });
+}
+
+function loadTrend() {
+  fetch('/api/trend?range=' + trend.h + 'h', { cache: 'no-store' })
+    .then(function (r) { return r.json(); })
+    .then(function (j) {
+      trend.items = (j && j.items) || [];
+      trend.bucket = (j && j.bucket) || 0;
+      var c = trend.items.length;
+      setText('tinfo', c
+        ? (c + ' 点 · 每 ' + (trend.bucket >= 60
+            ? (trend.bucket / 60) + ' 分钟'
+            : trend.bucket + ' 秒') + '一格')
+        : '没有数据');
+      renderTrend();
+    })
+    .catch(function () { setText('tinfo', '读取失败'); });
+}
+
+var tgs = document.querySelectorAll('.tg');
+for (var gi = 0; gi < tgs.length; gi++) {
+  tgs[gi].addEventListener('click', function () {
+    var v = +this.getAttribute('data-h');
+    if (v === trend.h) return;
+    trend.h = v;
+    var all = document.querySelectorAll('.tg');
+    for (var k = 0; k < all.length; k++) all[k].className = 'tg';
+    this.className = 'tg on';
+    setText('tinfo', '读取中…');
+    loadTrend();
+  });
 }
 
 function poll() {
@@ -299,7 +489,7 @@ function poll() {
   });
 }
 
-window.addEventListener('resize', function () { renderCharts(last); });
+window.addEventListener('resize', function () { renderCharts(last); renderTrend(); });
 
 /* ---- 远程控制（第 5 步）----
    点完立刻把按钮禁用，但**不在前端等命令落地**：一条命令要走
@@ -341,7 +531,13 @@ function sendCmd(v) {
 $('bon').addEventListener('click',  function () { sendCmd(1); });
 $('boff').addEventListener('click', function () { sendCmd(0); });
 
+bindHover($('c1'));
+bindHover($('c2'));
+bindHover($('c3'));
+
 poll();
+loadTrend();
+setInterval(loadTrend, 30000);
 </script>
 </body>
 </html>

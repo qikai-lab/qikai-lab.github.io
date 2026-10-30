@@ -31,7 +31,8 @@ M5-1 里踩到一个真问题：协调器原来用 ZigBee **广播**下发命令
                                           │ (内存快照) (SQLite WAL)          │
                                           │  ↓        ↓                      │
                                           │ /api/latest  /api/history        │
-                                          │ /api/stats   /api/alarms         │
+                                          │ /api/trend   /api/stats          │
+                                          │ /api/alarms  /api/cmd            │
                                           │  └────┬───────┘                  │
                                           │   http_srv (内置 HTTP, epoll)     │
                                           │      ↓                           │
@@ -59,15 +60,17 @@ M5-1 里踩到一个真问题：协调器原来用 ZigBee **广播**下发命令
 | 运行统计 | ✅ | 有效帧 / 坏帧 / 残帧 / 重同步字节 / 入库数 / 库错误 |
 | 内置 HTTP 服务 | ✅ | 自己写，`socket` + epoll，**不引第三方框架** |
 | `/api/latest` | ✅ | 读内存快照，0 延迟（不走 SQLite） |
-| `/api/history` | ✅ | 查 SQLite，时间正序，支持 `limit` / `node` |
+| `/api/history` | ✅ | 查 SQLite，时间正序，支持 `limit` / `node`（最近 N 条原始帧） |
+| `/api/trend` | ✅ | SQL 时间桶聚合，`range=1h\|24h`，点数固定 96~120 个，不随窗口增长 |
 | `/api/stats` | ✅ | 判断"卡住了"还是"没数据" |
-| 网页曲线 | ✅ | 单 HTML 内嵌进二进制，手写 canvas，无外部依赖 |
+| 网页曲线 | ✅ | 单 HTML 内嵌进二进制，手写 canvas，无外部依赖；双 Y 轴 + 时间刻度 + 悬停读数 |
+| 网页历史趋势 | ✅ | 1 小时 / 24 小时切换，按真实时间定位，掉线缺口**断开**而不是拉直线糊过去 |
 | **中值滤波** | ✅ M4 | 5 帧窗口吃掉 MQ-2 的单帧 ADC 尖峰 |
 | **自适应基线** | ✅ M4 | 慢速 EMA（τ=600 秒）+ 余数累积防整数死区 |
 | **烟雾告警状态机** | ✅ M4 | 正常/疑似/告警 三档 + 双阈值迟滞 + 连续帧确认 |
 | **告警事件落库** | ✅ M4 | 独立 `alarm` 表，一次告警一行，`/api/alarms` 可查历史 |
 | **网页告警展示** | ✅ M4 | 红色横幅（告警中闪烁）+ 倍数/基线 + 最近 10 次记录 |
-| 离线单元测试 | ✅ | 198 项断言（解析 50 + 历史/告警表 31 + 滤波 36 + HTTP 38 + 串联 23 + MQTT 报文 20），不需要硬件 |
+| 离线单元测试 | ✅ | 230 项断言（解析 50 + 历史/告警表 31 + 趋势聚合 32 + 滤波 36 + HTTP 38 + 串联 23 + MQTT 报文 20），不需要硬件 |
 | **远控继电器** | ✅ M5-1 | 网页按钮 → `/api/cmd` → 裸 socket 发 MQTT → ESP32 → 串口 → 协调器单播重发 → 终端执行 |
 | systemd 托管 | ✅ | `install_service.sh` 一键装；`Restart=always` + 开机自启 + journald |
 
@@ -183,11 +186,15 @@ linux_gateway/
 │   ├── test_parse.c    50 项解析 + 落库断言（用真实抓包做向量）
 │   ├── test_recent.c   31 项历史查询 + 告警表断言（倒序 / 过滤 / 上限 / 重启清理）
 │   ├── test_filter.c   36 项滤波 + 状态机断言（尖峰 / 死区 / 迟滞 / 冻结）
+│   ├── test_trend.c    32 项趋势聚合断言（分桶边界 / 四舍五入 / 断档不补 0 / 峰值）
 │   ├── test_http.c     38 项 HTTP 断言（5 个接口的 JSON + Content-Length）
 │   ├── test_chain.c    23 项端到端断言（假帧 → on_env → 加工 → 落库）
 │   └── test_cmd.c      20 项 MQTT 报文断言（逐字节对照标准，不需要 broker）
 └── tools/
     ├── sim_node.py     模拟 CC2530 节点，无硬件也能测
+    ├── xcheck_dual.py  双链路交叉验证：env_data(串口) vs env_data_mqtt(MQTT)
+    ├── serial_probe.py 绕开 gw 直接量串口原始字节流，定位丢字节发生在哪一层
+    ├── mock_gw.py      假网关：不插板子也能在浏览器里验网页（5 个接口的假数据）
     └── build_page.py   web/index.html → http_page.h
 ```
 
@@ -313,9 +320,10 @@ sqlite3 gw.db "ATTACH 'env_mqtt.db' AS m;
 
 | 路径 | 返回 |
 |---|---|
-| `GET /` | 网页（14.7KB，内嵌在二进制里） |
+| `GET /` | 网页（23.8KB，内嵌在二进制里） |
 | `GET /api/latest` | 最新一帧 + 加工结果 + 告警状态，**读内存快照，0 延迟** |
-| `GET /api/history?limit=60&node=0` | 最近 N 条，时间正序，`node=0` 表示不限 |
+| `GET /api/history?limit=60&node=0` | 最近 N 条**原始帧**，时间正序，`node=0` 表示不限 |
+| `GET /api/trend?range=1h&node=0` | **时间桶聚合**：`range=1h` / `24h` / `3600`。1h → 30 秒一桶 120 点，24h → 900 秒一桶 96 点 |
 | `GET /api/stats` | 帧数 / 坏帧 / 入库 / 库行数 / 告警次数 / uptime |
 | `GET /api/alarms?limit=20` | 最近 N 次告警，**时间倒序**（最新在上） |
 | `GET /api/cmd?v=1` | **第 5 步**：v=1 吸合、v=0 断开，立即返回不等结果（原因见 6.7） |
@@ -332,7 +340,30 @@ curl http://localhost:8080/api/alarms
 # {"ok":1,"count":1,"items":[
 #  {"id":1,"node":1,"start":1792836746,"end":1792836786,"dur":40,
 #   "base":35,"trig":120,"peak":320,"open":0}]}
+
+# 历史趋势：1 小时（30 秒一桶，最多 120 点）
+curl -s 'http://localhost:8080/api/trend?range=1h' | head -c 300
+# {"ok":1,"range":3600,"bucket":30,"from":1793344799,"to":1793348399,
+#  "count":120,"items":[{"t":1793344800,"n":30,"temp":23.4,"hum":55.1,
+#  "tmin":23.2,"tmax":23.6,"lux":412,"gas":36,"gmax":38,"pir":0}, ...
+
+# 24 小时（900 秒一桶，最多 96 点）
+curl -s 'http://localhost:8080/api/trend?range=24h' | head -c 200
+# {"ok":1,"range":86400,"bucket":900,"from":...,"count":96,"items":[...]}
 ```
+
+`/api/trend` 返回里有三个字段是刻意留的，不是凑数：
+
+| 字段 | 用途 |
+|---|---|
+| `bucket` | 桶宽（秒）。前端靠它判断"相邻两点间隔多少算正常" |
+| `n` | 这一桶里有几帧。**掉线体检指标**：30 秒桶正常 30 帧，掉到 5 就说明那半分钟串口几乎没数据 |
+| `gmax` | 桶内最高烟雾。烟雾**必须看峰值**：烧一张纸只持续 3 秒，在 15 分钟桶里平均下来几乎不变，但峰值会跳到 300+ |
+
+**中间断档为什么不补 0：** 补 0 会在曲线上画出一个"温度 0 度 / 光照 0"的坑，
+看起来像设备坏了，而真相只是那几分钟没有数据。所以 `gw_db_trend` 只返回
+**有数据的桶**，缺口靠两点之间的时间差表达；前端遇到间隔超过 2.5 倍桶宽就
+把线**断开**，缺口实实在在画出来。
 
 查库：
 
@@ -523,6 +554,29 @@ gw_baseline_update(&ctx->base, med, ctx->alarm.state == ALARM_ST_ALARM);
 | 坏帧率 | — | **3 / 900 = 0.33%**，`丢弃=0` |
 
 延迟下限由终端 `POLL_RATE=1000`（休眠终端每秒问一次父节点）决定，不是 bug。
+
+### 实测结果（2026-10-30 串口链路帧率）
+
+| 场景 | 实测 | 结论 |
+|---|---|---|
+| 只有一个 `./gw` 读 `ttyUSB0` | **21 秒 21 帧 = 1.000 帧/秒**，坏帧 0、残帧 0、重同步 0B | 设计值，链路本身没问题 |
+| 系统里有第二个 gw 同时在读同一个 tty | **0.33 帧/秒** | 两个进程分食同一串字节流，各拼不出完整帧 |
+
+第二行曾经被误判成「CH340 掉线导致丢帧」，追了两天才发现是某个 `Restart=always`
+的 systemd 服务在后台又拉起了一个 gw。**`ps -ef \| grep gw` 看不到它**——
+因为它进程名就叫 `gw`，和你要找的东西一模一样。
+
+排查口诀（按顺序，一条比一条狠）：
+
+```bash
+sudo ss -ltnp 'sport = :8080'          # 端口被谁占着
+sudo fuser -v gw.db gw.db-wal gw.db-shm # 库的写锁被谁拿着
+cat /proc/<PID>/cgroup                 # 最关键：出现 .service 就是 systemd 拉起的
+```
+
+顺带一条负面经验：`dmesg` 里的 `ch341_read_int_callback - usb_submit_urb failed: -19`
+是**真的**设备移除，但它只能证明「设备掉了」，**不能指认「谁在跟它抢」**。
+日志能证伪，不能定罪。
 
 ### 参数
 
