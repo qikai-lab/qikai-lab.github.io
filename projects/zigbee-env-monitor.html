@@ -128,6 +128,31 @@
       <span>手机竖拍，无剪辑</span>
     </div>
 
+    <div class="video-hero">
+      <video controls preload="metadata" poster="../assets/img/full-demo-poster.png">
+        <source src="../assets/video/full-demo.mp4" type="video/mp4">
+        你的浏览器不支持 video 标签，<a href="../assets/video/full-demo.mp4">点此下载</a>。
+      </video>
+      <div>
+        <h3>
+          全链路实机演示
+          <span class="hero-badge">72 秒 · 一镜到底</span>
+        </h3>
+        <p class="hero-lead">
+          从三块板子上电开始，一直走到浏览器里出现曲线。中间没有剪辑、没有换镜头，
+          拍的就是实际接好线、实际跑起来的样子——包括屏幕上"没有信号"时那一段。
+        </p>
+        <ul class="hero-cues">
+          <li><b>00:00</b><span>协调器上电，彩屏亮起，串口开始往外吐帧</span></li>
+          <li><b>00:09</b><span>P0_3 飞线接进 ESP32 的 GPIO18，同一路信号同时喂给板载 CH340</span></li>
+          <li><b>00:18</b><span>ESP32-S3 上电，OLED 显示 IP 与帧计数，WiFi 连上后开始 MQTT 发布</span></li>
+          <li><b>00:27</b><span>终端里跑起网关程序，每帧解析完立即入库</span></li>
+          <li><b>00:45</b><span>浏览器打开 8080，五张实时卡片开始跳数</span></li>
+          <li><b>00:55</b><span>切到历史曲线，1 小时 / 24 小时来回换，鼠标悬停读出该点温湿度</span></li>
+        </ul>
+      </div>
+    </div>
+
     <div class="video-grid">
 
       <div class="video-card">
