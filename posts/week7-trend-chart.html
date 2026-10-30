@@ -351,8 +351,26 @@ $ cat /proc/4083/cgroup
 
     <p>
       上面这些是假数据在浏览器里测的。真机跑起来是这样——节点板彩屏、ESP32、Ubuntu 终端、
-      网页，一条链走完，<strong>72 秒</strong>：
+      网页，一条链走完，<strong>72 秒</strong>，一镜到底不剪辑：
     </p>
+
+    <figure>
+      <video class="portrait" controls preload="metadata" playsinline poster="../assets/img/full-demo-poster.png">
+        <source src="../assets/video/full-demo.mp4" type="video/mp4">
+        你的浏览器不支持 video 标签，可以直接
+        <a href="../assets/video/full-demo.mp4">下载这段视频</a>。
+      </video>
+      <figcaption>
+        <strong>00:00</strong> 协调器上电、彩屏亮起 → <strong>00:09</strong> <code>P0_3</code> 飞线进 ESP32 →
+        <strong>00:18</strong> ESP32 上电、OLED 亮 → <strong>00:27</strong> 终端跑网关 →
+        <strong>00:45</strong> 浏览器出数字 → <strong>00:55</strong> 切历史曲线、悬停读数。<br>
+        顺序是：终端节点板彩屏读出 <code>T:20.5℃ H:43.0% Lux:688 Gas:22</code> →
+        ESP32-S3 把串口帧转成 WiFi/MQTT → Ubuntu 终端逐帧打印 →
+        网页三张曲线加历史趋势。全程没有手动干预
+      </figcaption>
+    </figure>
+
+    <p>更早还拍过一版，手机横屏，从桌面一路拍到板子、终端、网页：</p>
 
     <figure>
       <video controls preload="metadata" playsinline poster="../assets/img/trend-demo-poster.png">
@@ -361,9 +379,8 @@ $ cat /proc/4083/cgroup
         <a href="../assets/video/trend-demo.mp4">下载这段视频</a>。
       </video>
       <figcaption>
-        顺序是：终端节点板彩屏读出 <code>T:20.5℃ H:43.0% Lux:688 Gas:22</code> →
-        ESP32-S3 把串口帧转成 WiFi/MQTT → Ubuntu 终端逐帧打印 →
-        网页三张曲线加历史趋势。全程没有手动干预
+        这版能看到当时的环境和白板，但手机拍屏幕有反光，字不如上面清楚。
+        内容是同一套：板子上的彩屏读数 → 终端逐帧打印 → 网页曲线与悬停读数
       </figcaption>
     </figure>
 
