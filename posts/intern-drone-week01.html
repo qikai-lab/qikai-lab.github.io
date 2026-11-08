@@ -1,0 +1,739 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>第 1–2 周：Mid-360S 点亮，以及两块 ARM 板的不同结局 · 第一次无人机的相关实习</title>
+<meta name="author" content="qikai-lab">
+<link rel="canonical" href="https://qikai-lab.github.io/posts/intern-drone-week01.html">
+<meta property="og:type" content="article">
+<meta property="og:site_name" content="第一次无人机的相关实习 · 开发手记">
+<meta property="og:url" content="https://qikai-lab.github.io/posts/intern-drone-week01.html">
+<meta name="description" content="实习前两周：把 Livox Mid-360S 从通电做到 RViz 出点云。先在 Jetson Orin NX 上折腾，网络层一直不干净，换到 RK3588 之后当天下午就通了。含主机型号自查、host_ip 陷阱、install 目录旧配置、外参只能补一次。">
+<link rel="stylesheet" href="../assets/css/style.css">
+</head>
+<body>
+
+<header class="site-header">
+  <nav class="nav">
+    <a class="brand" href="../index.html">
+      <span class="brand-mark">QL</span>
+      <span>qikai-lab</span>
+    </a>
+    <div class="nav-links">
+      <a href="../index.html">首页</a>
+      <a href="../projects/">项目</a>
+      <a href="../posts/" class="active">手记</a>
+      <a href="../index.html#about">关于</a>
+    </div>
+  </nav>
+</header>
+
+<main class="wrap">
+
+  <div class="post-header">
+    <div class="breadcrumb"><a href="../index.html">首页</a> / <a href="../posts/">手记</a> / 第一次无人机的相关实习</div>
+    <h1>第 1–2 周：Mid-360S 点亮，以及两块 ARM 板的不同结局</h1>
+    <div class="post-meta">
+      <span>2026-11-08</span>
+      <span class="dot">·</span>
+      <span class="tag done">点云已出</span>
+      <span class="tag">ROS 2 Humble</span>
+      <span class="tag">Livox</span>
+      <span class="tag">RK3588</span>
+      <span class="tag">排障复盘</span>
+    </div>
+  </div>
+
+  <article class="prose">
+
+    <p>
+      实习报到的第一件事，不是看论文，也不是写算法，是把一台激光雷达接到板子上，
+      让屏幕上出现一片点云。
+    </p>
+
+    <p>
+      听起来是「装个驱动、跑个 launch」的量级。实际花掉两周，而且
+      <strong>卡住的地方一件都不在代码里</strong>——全在网段、IP、配置文件读的是哪一份、
+      以及板子到底是什么型号这几件很土的事情上。
+    </p>
+
+    <p>
+      这两周手上经过的东西：一台 <strong>Livox Mid-360S</strong>（3D 激光雷达，以太网输出，
+      DC 9~27 V 供电）、一块 <strong>Jetson Orin NX</strong>、一块 <strong>RK3588</strong>，
+      外加一块给雷达供电的电池包。
+      <strong>最后留下来干活的是 RK3588</strong>；Jetson 那条路走到一半被换掉了。
+      桌面上的常态是这样：
+    </p>
+
+    <figure>
+      <img src="../assets/img/mid360-bench-power.jpg" alt="实验台实拍：绿色防静电台垫上摆着电池包、黑色电源适配器、网线与各种转接线，右上方是笔记本电脑，屏幕上开着接入教程">
+      <figcaption>
+        桌上这一摊就是前两周的全部战场。雷达用<strong>电池直接供电</strong>（9~27 V 宽压，
+        黑的那包是电池，电工胶带缠着出线），一根网线回电脑。
+        没有 USB、没有串口、没有「插上就认出设备」——<strong>它只认 IP</strong>
+      </figcaption>
+    </figure>
+
+    <div class="callout info">
+      <div class="callout-icon">i</div>
+      <div class="callout-body">
+        <strong>这一篇是「第一次无人机的相关实习」的第一篇。</strong>
+        写的是最土的那一段：让雷达被电脑看见，以及中间换了一次板子。
+        点云出来之后的事——建 TF、录 bag、跑 SLAM、装到飞机上——都在后面。
+      </div>
+    </div>
+
+    <h2 id="whoami">一、先搞清楚这块板子到底是什么</h2>
+
+    <p>
+      拿到 Jetson 之后我没有立刻装东西，先问了一句「它到底是谁」。
+      这不是谨慎，是被逼的：网上随便一篇 ROS 2 教程都默认你是 x86 桌面，
+      在 ARM 板子上照抄，第一步 <code>apt install</code> 就会给你一点颜色看看。
+    </p>
+
+    <figure>
+      <img src="../assets/img/jetson-orin-nx-board.jpg" style="max-width:340px" alt="Jetson Orin NX 计算模块实拍：核心模组插在载板上，散热风扇在上方，载板上引出 HDMI、USB、千兆网口与电源接口，另有一块 M.2 转接板">
+      <figcaption>
+        这块就是当时的第一方案。核心模组（带风扇那个）插在载板上，
+        右边一排是 HDMI / USB / 网口——<strong>雷达的网线最后就插在这排网口中的一个上</strong>。
+        转接板和一堆线是这套开发套件的常态
+      </figcaption>
+    </figure>
+
+    <p>三条命令就够把它问清楚：</p>
+
+<pre>$ uname -a
+Linux nvidia-desktop 5.15.148-tegra #1 SMP PREEMPT ... aarch64 aarch64 aarch64 GNU/Linux
+
+$ cat /proc/device-tree/model
+NVIDIA Jetson Orin NX Engineering Reference Developer Kit
+
+$ lscpu
+架构：           aarch64
+型号名称：       Cortex-A78AE
+CPU(s)：         8</pre>
+
+    <figure>
+      <img src="../assets/img/jetson-uname-model.jpg" alt="Jetson 终端截图：uname -a 显示内核 5.15.148-tegra、架构 aarch64；cat /proc/device-tree/model 输出 NVIDIA Jetson Orin NX Engineering Reference Developer Kit；上方是 ifconfig 的收发统计">
+      <figcaption>
+        <code>5.15.148-tegra</code> 这个后缀 + <code>aarch64</code>，两件事同时成立，
+        就基本锁定了这套系统是 <strong>JetPack 6 / Ubuntu 22.04 / ROS 2 Humble</strong> 这一档。
+        上面那段 <code>RX packets 405470 / 715.9 MB</code> 是网卡的累计收包——
+        雷达数据流进来之后这个数字会持续涨，是个不用装任何工具的心跳指标
+      </figcaption>
+    </figure>
+
+    <figure>
+      <img src="../assets/img/jetson-lscpu.jpg" alt="Jetson 终端截图：lscpu 输出显示 Cortex-A78AE、8 个 CPU、架构 aarch64、字节序 Little Endian，缓存 L1d 256 KiB、L2 2 MiB、L3 4 MiB">
+      <figcaption>
+        <code>lscpu</code> 再看一遍核数与缓存。这台是 <strong>8 核 Cortex-A78AE</strong>，
+        后面跑点云和 SLAM 的时候，这个数决定了能同时开几个进程、
+        <code>make -j</code> 敢开多大
+      </figcaption>
+    </figure>
+
+    <p>
+      <strong>为什么值得单独占一节</strong>：Jetson 的镜像、L4T 内核版本、CUDA、
+      ROS 发行版、以及「这个包有没有 aarch64 版本」，是绑死在一起的一串。
+      把型号先钉死，后面所有「装不上」的报错才有得查——
+      你会先怀疑版本不匹配，而不是先怀疑自己敲错了命令。
+    </p>
+
+    <h2 id="swap">二、这台 Jetson 最后被换掉了</h2>
+
+    <p>
+      型号确认完、ROS 2 也装上了，问题出在<strong>网络这一层</strong>。
+    </p>
+
+    <p>
+      想看网卡到底是什么型号，敲 <code>lspci</code>，直接回一句「未找到命令」——
+      这个镜像里连 pciutils 都没装。装上之后才看清这台的网络配置：
+    </p>
+
+<pre>$ lspci | grep -i network
+0007:01:00.0 Network controller: Realtek Semiconductor Co., Ltd. RTL8822CE 802.11ac PCIe Wireless Network Adapter
+
+$ lspci -nn | grep -i net -A 3
+0001:01:00.0 Ethernet controller [0200]: Realtek Semiconductor Co., Ltd.
+        RTL8111/8168/8411 PCI Express Gigabit Ethernet Controller [10ec:8168] (rev 05)
+        Subsystem: Realtek Semiconductor Co., Ltd. RTL8111/8168 PCI Express Gigabit Ethernet controller [10ec:8168]
+        Kernel driver in use: r8168
+        Kernel modules: r8168</pre>
+
+    <figure>
+      <video controls preload="metadata" playsinline poster="../assets/img/jetson-lspci-check-poster.jpg">
+        <source src="../assets/video/jetson-lspci-check.mp4" type="video/mp4">
+        你的浏览器不支持 video 标签，可以直接
+        <a href="../assets/video/jetson-lspci-check.mp4">下载这段视频</a>。
+      </video>
+      <figcaption>
+        当时排查的实录。最上面那行
+        <code>iw dev wlan0 get power_save</code> 直接返回
+        <code>command failed: No such device (-19)</code>——<strong>无线设备根本没被认出来</strong>。
+        有线是 Realtek RTL8111/8168，走 <code>r8168</code> 驱动。<br>
+        顺手说一句：<code>-19</code> 是 <code>ENODEV</code>，这个错误码在别的地方又见过一次
+      </figcaption>
+    </figure>
+
+    <p>
+      为什么这件事很要命：雷达吐的是<strong>10 Hz、几十 Mbps 的连续 UDP 流</strong>，
+      不是「偶尔发一个包」。网卡驱动这一层只要不干净，表现不是「连不上」，
+      而是<strong>能 ping 通、能出几个话题、然后点云时有时无</strong>。
+      这种「半通不通」比彻底不通难查得多——你分不清是自己配置错了，还是它本来就这样。
+    </p>
+
+    <p>
+      这台机器的结局是被换掉。<strong>换板子不是技术结论，是效率判断</strong>：
+      同样的时间花在跟驱动较劲上，不如换一块本来就没有这个问题、而且当天就能跑通的板子。
+    </p>
+
+    <div class="callout warn">
+      <div class="callout-icon">!</div>
+      <div class="callout-body">
+        <strong>这里要说清楚，免得写成「Realtek 网卡不行」。</strong>
+        实际情况是「这台机器上的网络层从一开始就不干净，反复折腾之后决定换」，
+        <strong>而不是「查清了根因才换」</strong>。
+        排查没做完就换硬件，是个合理的工程选择，但它不是个技术结论——
+        所以这一段我只记现象和决定，不编一个因果出来。
+      </div>
+    </div>
+
+    <h2 id="network">三、换到 RK3588，第一步还是把网络弄通</h2>
+
+    <p>
+      换板之后没有新流程，还是老一套：<strong>供电 → 网线 → 两边 IP 同网段 → ping 通</strong>。
+      区别是这一次每一步一次过。
+    </p>
+
+    <figure>
+      <video controls preload="metadata" playsinline poster="../assets/img/mid360-bench-poster.jpg">
+        <source src="../assets/video/mid360-bench.mp4" type="video/mp4">
+        你的浏览器不支持 video 标签，可以直接
+        <a href="../assets/video/mid360-bench.mp4">下载这段视频</a>。
+      </video>
+      <figcaption>
+        换板之后的台面：<strong>电池</strong>（竖着那包，红黑线出来）、
+        <strong>板子</strong>（中间那块，芯片上贴了白色标签）、一堆转接线、白色插排，
+        右边笔记本开着教程。雷达的数据从头到尾就走一根网线
+      </figcaption>
+    </figure>
+
+    <p>
+      Mid-360S 走以太网口往外吐数据，UDP，固定端口 56100~56500 那一档。
+      它没有「自动发现」这回事，两边 IP 不在一个网段，就是一点数据都没有。
+      <strong>ping 不通之前，装什么驱动都是空转。</strong>
+    </p>
+
+    <p>配 IP 用的是 <code>nmcli</code>，不是 <code>ip addr add</code>：</p>
+
+<pre><span class="dim"># 把有线网卡设成 192.168.1.150/24 这个地址</span>
+sudo nmcli connection modify "eth0" ipv4.addresses 192.168.1.150/24
+sudo nmcli connection modify "eth0" ipv4.method manual
+sudo nmcli connection modify "eth0" ipv4.gateway ""
+sudo nmcli connection modify "eth0" ipv4.dns ""
+sudo nmcli connection up "eth0"</pre>
+
+    <p>
+      <strong>为什么不用 <code>ip addr add</code></strong>：那条命令改的是内核里的运行时状态，
+      重启、拔插网线、甚至 NetworkManager 自己刷新一下就可能没了。
+      调试期一天要重启板子七八次，用临时命令就得每次重敲一遍，
+      迟早在某一次漏掉，然后花半小时怀疑是网线坏了。
+      <code>nmcli</code> 写进的是 NetworkManager 的连接配置，重启后还在。
+    </p>
+
+    <p>配上之后，<code>ip addr</code> 里能看到地址真的挂上了，再看话题列表：</p>
+
+    <figure>
+      <img src="../assets/img/rk3588-nmcli-topics.jpg" alt="RK3588 终端截图：连续几条 nmcli 命令把 eth0 设为 192.168.1.150 并激活，下面 ros2 topic list 列出 /clicked_point、/initialpose、/livox/lidar、/move_base_simple/goal、/parameter_events、/rosout、/tf、/tf_static">
+      <figcaption>
+        2026-11-06 16:59，RK3588 上。上面几条是配网，下面 <code>ros2 topic list</code>
+        里出现了 <code>/livox/lidar</code>——这一行出现，说明<strong>驱动收到了 UDP 包并且转成了 ROS 2 话题</strong>。
+        同一天上午还在 Jetson 上装 ROS 2，下午这里就通了<br>
+        注意这一屏里<strong>没有 <code>/livox/imu</code></strong>。当时觉得点云能看就行，
+        到要接 FAST-LIO2 才发现 IMU 是必需的，这是后面才补上的
+      </figcaption>
+    </figure>
+
+    <p>两个容易踩的细节，都不像技术问题：</p>
+
+    <ul>
+      <li>
+        <strong>网卡名未必是 <code>eth0</code>。</strong>
+        台式机上常见 <code>enp108s0</code>、<code>eno1</code>，用 <code>ip addr</code> 看真名。
+        而且输出里<strong>接口名后面那个冒号只是排版</strong>，不是名字的一部分，别一起复制进命令。
+      </li>
+      <li>
+        <strong>ping 得通不代表数据走对了网卡。</strong>
+        板子同时开着 WiFi 和有线时，系统可能把去 <code>192.168.1.x</code> 的包从 WiFi 送出去。
+        雷达的数据包进来了，但驱动绑定的是另一张网卡的 socket——照样收不到。
+      </li>
+    </ul>
+
+    <h2 id="install">四、ROS 2 先落地，然后 SDK 和驱动，顺序不能反</h2>
+
+    <p>
+      版本是定死的：Ubuntu 22.04 对应 <strong>ROS 2 Humble</strong>，没有选择的余地。
+      <strong>装的是 <code>ros-humble-desktop</code>，不是 <code>ros-base</code></strong>——
+      虽然 base 更小，但后面要用 RViz 看点云，缺了再补一遍更麻烦。
+    </p>
+
+    <figure>
+      <img src="../assets/img/jetson-ros2-install.jpg" style="max-width:420px" alt="Jetson 桌面实拍：浏览器里开着 ros-humble 相关包的安装说明页，终端窗口正在安装 ROS 2 包，显示 rviz2 的配置文件创建与 /usr/bin/rviz2 符号链接">
+      <figcaption>
+        这张是 Jetson 上装 ROS 2 时拍的（换板之后在 RK3588 上又装了一遍，流程一样）。
+        apt 一路装下去没什么可写的，图里能看到 <code>rviz2</code> 的配置文件被创建、
+        <code>/usr/bin/rviz2</code> 挂了软链接——<strong>这条线走通了，后面才有「看点云」这一说</strong>
+      </figcaption>
+    </figure>
+
+    <p>
+      真正有顺序要求的是 Livox 那两层，名字很像，作用完全不同：
+    </p>
+
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr><th>组件</th><th>是什么</th><th>依赖关系</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><code>Livox-SDK2</code></td>
+            <td>底层通信库，负责和雷达讲协议、收 UDP、解包</td>
+            <td>要先装，装到 <code>/usr/local</code></td>
+          </tr>
+          <tr>
+            <td><code>livox_ros_driver2</code></td>
+            <td>ROS 2 驱动节点，调 SDK2 把数据转成 ROS 话题</td>
+            <td>编译时链接 SDK2，<strong>必须先装好 SDK2</strong></td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <p>
+      顺序反了，表现是在 <code>cmake</code> 阶段报找不到 Livox 的头文件和库——
+      不是编译到一半失败，是连配置都过不去。这个报错已经足够明确，不算坑。
+      真正的坑在<strong>装完之后运行时</strong>：
+    </p>
+
+<pre><span class="dim"># SDK2 装好、驱动也编好了，一启动就挂</span>
+error while loading shared libraries: liblivox_lidar_sdk_shared.so
+
+<span class="dim"># 库确实在，只是动态链接器不知道去 /usr/local/lib 找</span>
+$ ls /usr/local/lib | grep livox
+$ echo 'export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:/usr/local/lib' &gt;&gt; ~/.bashrc
+$ source ~/.bashrc</pre>
+
+    <div class="callout warn">
+      <div class="callout-icon">!</div>
+      <div class="callout-body">
+        <strong>「装上了」和「能加载」是两件事。</strong>
+        <code>sudo make install</code> 把 .so 放进 <code>/usr/local/lib</code>，
+        但这个目录不在默认的运行时搜索路径里（在 <code>ldconfig</code> 的配置里才算）。
+        编得过、装得上，跑起来说找不到——这一课在这两周出现过不止一次。
+      </div>
+    </div>
+
+    <p>
+      驱动本身用官方的 <code>build.sh humble</code> 编，不用自己拼 <code>colcon</code> 参数：
+      里面已经把这个版本对 ROS 2 Humble 的兼容处理写好了。
+      但编的时候建议加一个参数：
+    </p>
+
+<pre>cd ~/livox_ws
+colcon build --symlink-install
+source install/setup.bash</pre>
+
+    <p>
+      <code>--symlink-install</code> 的作用是让 <code>install/</code> 里的文件变成源码目录的软链接，
+      改配置立刻生效。这个参数在下一节会救一次命。
+    </p>
+
+    <h2 id="config">五、json 里最容易填错的一格：host_ip</h2>
+
+    <p>
+      <code>MID360s_config.json</code> 是整个接入过程里唯一需要手写的地方，
+      里面真正会出错的就那么几格：
+    </p>
+
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr><th>字段</th><th>填什么</th><th>填错的后果</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><code>host_ip</code></td>
+            <td><strong>雷达能看到的那张网卡的 IP</strong>，如 <code>192.168.1.150</code></td>
+            <td>驱动绑错网卡，收不到 UDP；<code>topic</code> 有，<code>hz</code> 是 0</td>
+          </tr>
+          <tr>
+            <td><code>lidar_configs[].ip</code></td>
+            <td>雷达自己的 IP</td>
+            <td>完全连不上，和没插网线一样</td>
+          </tr>
+          <tr>
+            <td><code>pcl_data_type</code></td>
+            <td><code>1</code>（常用）</td>
+            <td>点云的字段布局不对，下游算法读出来是乱数</td>
+          </tr>
+          <tr>
+            <td><code>pattern_mode</code></td>
+            <td><code>0</code>，非重复扫描</td>
+            <td>扫描图案变了，建图效果和预期不一致</td>
+          </tr>
+          <tr>
+            <td><code>extrinsic_parameter</code></td>
+            <td>验证阶段全填 0</td>
+            <td>见第七节，填错会让点云整体歪掉，且很难看出是谁的错</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <p>
+      <code>host_ip</code> 这一格是所有坑里最隐蔽的。它<strong>不会报错</strong>：
+      驱动正常启动，日志正常打印，<code>ros2 topic list</code> 里
+      <code>/livox/lidar</code> 老老实实躺着，看起来一切正常。
+      但 <code>ros2 topic hz /livox/lidar</code> 是空的——
+      因为驱动在「我以为的那张网卡」上等数据，数据却从另一张网卡进来了。
+    </p>
+
+    <p>
+      判断方法不需要猜：驱动启动日志里会打出它绑定到了哪个地址，
+      对照 <code>ip addr</code> 看那个地址属于哪张网卡，
+      再看 <code>ip route</code> 里到雷达网段的出口是不是同一张。
+      两边一致，才算真的通了。
+    </p>
+
+    <div class="callout">
+      <div class="callout-icon">!</div>
+      <div class="callout-body">
+        <strong>改了 json 却没反应，先别怀疑驱动不读配置——先确认它读的是哪一个文件。</strong>
+        源码目录 <code>src/livox_ros_driver2/config/</code> 和
+        <code>install/livox_ros_driver2/share/.../config/</code> 是两份。
+        运行时加载的是 <code>install</code> 那一份。
+        普通 <code>colcon build</code> 之后它就是一份拷贝，改源码不重编等于没改。<br>
+        确认办法：<code>grep -n "user_config_path"</code> 查 launch 文件里指向的路径，
+        或者干脆 <code>--symlink-install</code> 重编一次，从此只有一份。
+      </div>
+    </div>
+
+    <h2 id="launch">六、launch 选哪个，决定了话题里装的是什么</h2>
+
+    <p>
+      驱动目录下的 launch 文件看着很多，其实只分两类，
+      区别不在「开不开 RViz」，而在<strong>发出来的消息类型</strong>：
+    </p>
+
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr><th>launch</th><th><code>/livox/lidar</code> 的消息类型</th><th>能用来干什么</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><code>rviz_MID360_launch.py</code></td>
+            <td><code>sensor_msgs/PointCloud2</code></td>
+            <td>RViz 直接显示；大多数点云处理工具都能吃</td>
+          </tr>
+          <tr>
+            <td><code>msg_MID360_launch.py</code></td>
+            <td>Livox 自定义 <code>CustomMsg</code></td>
+            <td><strong>FAST-LIO2 这一路只认这个</strong>，RViz 默认显示不了</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <p>
+      「先跑 <code>rviz_*</code> 看点云、确认硬件通了」是对的，
+      但要知道这一步验的是<strong>链路</strong>，不是<strong>算法要的接口</strong>。
+      我第一次跑通时挺高兴，直到发现后面要接的 SLAM 吃的是另一种消息——
+      同一个 <code>/livox/lidar</code> 话题名，里面的东西不是一个格式。
+    </p>
+
+    <p>
+      这也解释了一个常见困惑：<code>ros2 topic list</code> 里名字一样，
+      为什么换个 launch 之后下游节点就报「消息类型不匹配」。
+      名字是给人看的，<strong>类型才是契约</strong>。
+    </p>
+
+    <h2 id="rviz">七、点云亮起来的那一下，以及三个参数</h2>
+
+    <p>
+      启动之后 RViz 里什么都没有，是最常见的一步。
+      大多数时候不是没数据，是<strong>坐标系对不上</strong>：
+      RViz 的 <code>Fixed Frame</code> 默认是 <code>map</code>，
+      而这时候系统里根本没有 <code>map</code>，也没有任何 TF——雷达的 <code>livox_frame</code> 是一座孤岛。
+    </p>
+
+    <p>
+      把 <code>Fixed Frame</code> 改成 <code>livox_frame</code>，点云立刻出来：
+    </p>
+
+    <figure>
+      <img src="../assets/img/rviz-livox-pointcloud.jpg" alt="RViz2 界面截图：左侧 Fixed Frame 设为 livox_frame，PointCloud2 话题 /livox/lidar，Style 为 Flat Squares、Size 0.01、Alpha 0.1、Decay Time 0.2、Color Transformer 为 Intensity；中间是用强度着色的点云">
+      <figcaption>
+        2026-11-07 14:15。左侧那几个参数是这一屏真正的成果：
+        <code>Decay Time 0.2</code> 让最近 0.2 秒的点留在屏幕上叠加，
+        <code>Alpha 0.1</code> 压低不透明度避免糊成一片白，
+        <code>Color Transformer: Intensity</code> 按反射率上色。
+        雷达还架在桌上没上机，能看出的只是房间一角
+      </figcaption>
+    </figure>
+
+    <p>再录一段动态的，看它到底在出什么：</p>
+
+    <figure>
+      <video controls preload="metadata" playsinline poster="../assets/img/rviz-pointcloud-live-poster.jpg">
+        <source src="../assets/video/rviz-pointcloud-live.mp4" type="video/mp4">
+        你的浏览器不支持 video 标签，可以直接
+        <a href="../assets/video/rviz-pointcloud-live.mp4">下载这段视频</a>。
+      </video>
+      <figcaption>
+        对着显示器录的，能看到 RViz 右上角帧率跑到 <strong>48</strong>，
+        点云把墙角、地面和前面的东西分出了层次。
+        这一版的 <code>Alpha</code> 调到了 <code>1</code>——
+        和上面那张截图（<code>0.1</code>）不一样，是不同时刻试的参数，
+        <strong>这几个值是看着效果调的，没有唯一正确答案</strong>
+      </figcaption>
+    </figure>
+
+    <p>三个参数为什么这么给，值得记一下——它们不是随便调的：</p>
+
+    <ul>
+      <li>
+        <strong>Decay = 0.2 秒，而不是 0。</strong>
+        一帧只有几万个点，单帧看是稀的。让它保留 0.2 秒，就是十几帧叠在一起，
+        形状才连得起来。<strong>但它也是假的清晰</strong>：物体动起来会有拖影，
+        所以调参时看动态物体，别被 Decay 骗了。
+      </li>
+      <li>
+        <strong>Alpha 在 0.1 到 1 之间试。</strong>
+        点云在近处会极度密集，完全不透明就是一片惨白，压下去才有层次；
+        但如果只是想确认「有没有点」，调到 1 反而最直观。
+      </li>
+      <li>
+        <strong>按 Intensity 上色，不是按高度。</strong>
+        强度是回波反射率：白墙弱、金属和反光物体强。
+        按高度上色只能看出「哪里高」，按强度能直接看出<strong>材质</strong>，
+        排障时更容易发现「这块区域怎么一点返回都没有」。
+      </li>
+    </ul>
+
+    <h2 id="extrinsic">八、外参：同一个角度只能补一次</h2>
+
+    <p>
+      这是这两周里唯一一个<strong>不会报错、但会让后面全部白做</strong>的地方。
+      系统里有三处可以写「雷达装在哪、朝哪个方向」，作用完全不同：
+    </p>
+
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr><th>写在哪</th><th>改变的是什么</th><th>会不会发布 TF</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><code>MID360s_config.json</code> 的 <code>extrinsic_parameter</code></td>
+            <td>驱动<strong>吐出来的点的坐标本身</strong></td>
+            <td>不会</td>
+          </tr>
+          <tr>
+            <td>ROS TF（<code>static_transform_publisher</code>）</td>
+            <td>两个坐标系之间的<strong>换算关系</strong>，点云本身不动</td>
+            <td>会</td>
+          </tr>
+          <tr>
+            <td>算法里的 <code>extrinsic_T</code> / <code>extrinsic_R</code></td>
+            <td>算法内部认为的雷达到机体/IMU 关系</td>
+            <td>不会</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <p>
+      问题就出在这三处都能补同一个角度。雷达前倾 30 度，
+      你在 json 里补 30 度、又在 TF 里补 30 度，结果就是<strong>补了 60 度</strong>。
+      点云看起来「好像有点歪」，但歪得不多，很容易被当成标定误差放过去。
+      等到飞起来，轨迹是斜的，那时候再回头找，代价就大了。
+    </p>
+
+    <div class="callout danger">
+      <div class="callout-icon">!</div>
+      <div class="callout-body">
+        <strong>一条规矩：同一个角度/位移，只在一处补。</strong>
+        验证阶段最省事的做法是——json 里全 0，TF 里也只声明一个同名 frame，
+        让雷达就是世界原点。<strong>先把「通不通」验完，再谈「装得正不正」</strong>。
+        这两件事混在一起查，会同时失去两个参照系。
+      </div>
+    </div>
+
+    <h2 id="stuck">九、真正卡住时间的六个地方</h2>
+
+    <p>
+      按实际卡住的顺序排，全部是配置和网络，没有一个是代码写错：
+    </p>
+
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr><th>#</th><th>现象</th><th>当时的判断</th><th>实际原因</th><th>怎么确认</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>1</td>
+            <td>ping 不通雷达</td>
+            <td>网线/雷达坏了</td>
+            <td>电脑这边根本没配同网段 IP，或者配在了另一张网卡上</td>
+            <td><code>ip addr</code> 看地址挂在哪张卡</td>
+          </tr>
+          <tr>
+            <td>2</td>
+            <td>ping 通了，但 <code>topic hz</code> 是 0</td>
+            <td>驱动没装好</td>
+            <td><code>host_ip</code> 填的不是雷达那张网卡的地址</td>
+            <td>驱动日志里的绑定地址 vs <code>ip route</code> 的出口</td>
+          </tr>
+          <tr>
+            <td>3</td>
+            <td>改了 json，行为一点没变</td>
+            <td>驱动不读这个文件</td>
+            <td>运行时加载的是 <code>install/</code> 里的旧副本</td>
+            <td><code>grep user_config_path</code> 看 launch 指哪；或 <code>--symlink-install</code></td>
+          </tr>
+          <tr>
+            <td>4</td>
+            <td>有话题，RViz 里空白</td>
+            <td>点云格式不对</td>
+            <td><code>Fixed Frame</code> 还是默认的 <code>map</code>，系统里没有这个坐标系</td>
+            <td>改成 <code>livox_frame</code>（此时雷达就是原点）</td>
+          </tr>
+          <tr>
+            <td>5</td>
+            <td>启动报 <code>liblivox_lidar_sdk_shared.so</code> 找不到</td>
+            <td>SDK 没装</td>
+            <td>库装到了 <code>/usr/local/lib</code>，不在运行时搜索路径</td>
+            <td><code>ldconfig -p | grep livox</code>、<code>echo $LD_LIBRARY_PATH</code></td>
+          </tr>
+          <tr>
+            <td>6</td>
+            <td>点云很卡，RViz 拖不动</td>
+            <td>板子算力不够</td>
+            <td>默认按 10 Hz 全量发点，显示跟不上</td>
+            <td>先把 <code>publish_freq</code> 降到 5.0 试，能流畅就说明是带宽/渲染，不是算力</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <p>
+      这六条里，<strong>第 1、2、3 条有一个共同点：系统不报错。</strong>
+      不报错的失败最贵——因为它不给你任何方向，你只能自己想一个假设、
+      验一次、推翻、再想一个。所以后面我改了个习惯：
+      每接一个新外设，先把<strong>「数据到了哪一层」</strong>问清楚——
+      网线上有没有包（<code>ifconfig</code> 的 RX 在不在涨）、驱动有没有绑对地址、
+      话题有没有发布频率、RViz 里坐标系对不对。
+      这四层里任何一层断了，都能单独确认，不用一次猜一个大的。
+    </p>
+
+    <h2 id="todo">十、还没做的，和为什么先不做</h2>
+
+    <p>
+      点云出来只是这条链的第一环。明确还没做的有四件：
+    </p>
+
+    <ol>
+      <li>
+        <strong>TF 树还没建。</strong>
+        现在 <code>livox_frame</code> 是孤立的，没跟 <code>base_link</code> / <code>body</code> 连起来。
+        这一步要等雷达真正装到机身上、量出安装位置之后再做——
+        现在建了也是错的。
+      </li>
+      <li>
+        <strong>还没上机飞。</strong>
+        这两周所有点云都是雷达架在桌上打的。飞机还在地上：
+        <figure style="margin-top:16px">
+          <img src="../assets/img/indoor-flight-cage.jpg" style="max-width:340px" alt="室内飞行场：蓝色地胶地面，四周是白色防护网，透过网看到场地中央地面上停着一台黑色无人机">
+          <figcaption>
+            室内飞场，四周围着防护网。下次进这里，雷达应该挂在上面那台机器上，而不是摆在桌上
+          </figcaption>
+        </figure>
+      </li>
+      <li>
+        <strong>没录 rosbag，也没跑 SLAM。</strong>
+        要跑 FAST-LIO2，得先换成 <code>msg_*</code> 那个 launch（发 <code>CustomMsg</code>），
+        再把 <code>/livox/lidar</code> 和 <code>/livox/imu</code> 一起录下来。
+        现在 IMU 话题刚补齐，还没做这件事。
+      </li>
+      <li>
+        <strong>外参没标定。</strong>
+        验证阶段 json 里是全 0，这是故意的。真实安装角度要等雷达固定到机体上再量。
+      </li>
+    </ol>
+
+    <h2 id="next">十一、下一步</h2>
+
+    <p>按依赖顺序，接下来该动的就四步，跳步会返工：</p>
+
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr><th>#</th><th>做什么</th><th>完成的标志</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>1</td>
+            <td>雷达固定上机，量出相对机体的位置和角度</td>
+            <td>有一组能写进配置的数字，不是「大概在正中间」</td>
+          </tr>
+          <tr>
+            <td>2</td>
+            <td>建 <code>base_link → livox_frame</code> 的静态 TF</td>
+            <td><code>tf2_echo</code> 能查到，且 RViz 里固定 frame 换成 <code>base_link</code> 后点云正常</td>
+          </tr>
+          <tr>
+            <td>3</td>
+            <td>换 <code>msg_*</code> launch，录第一份 bag</td>
+            <td>bag 里 <code>/livox/lidar</code> 是 <code>CustomMsg</code>，<code>/livox/imu</code> 有数据</td>
+          </tr>
+          <tr>
+            <td>4</td>
+            <td>用录好的 bag 离线跑一遍 FAST-LIO2</td>
+            <td>能从 bag 重复播，建出的图每次一样——先离线跑通，再谈上机</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="callout success">
+      <div class="callout-icon">→</div>
+      <div class="callout-body">
+        <strong>两周的实际进度：一块雷达被点亮，中间换了一次板子，点云在 RViz 里稳定显示。</strong>
+        代码一行没写，但把「数据从雷达到屏幕上」这条路上每一段都单独验过了：
+        供电、网络、SDK、驱动、配置、话题、坐标系。
+        这条路以后要换机器、换雷达、换飞机，验的还是这七段——所以值得慢一次，把它走干净。
+      </div>
+    </div>
+
+    <div class="post-footer">
+      <a class="btn" href="index.html">← 全部手记</a>
+      <a class="btn btn-primary" href="../projects/">看项目 →</a>
+    </div>
+
+  </article>
+
+</main>
+
+<footer class="site-footer">
+  <div class="wrap-wide">
+    <span>qikai-lab · 第一次无人机的相关实习</span>
+    <span>最近更新：2026-11-08</span>
+  </div>
+</footer>
+
+</body>
+</html>
