@@ -70,7 +70,7 @@
           <p class="side-title">现在</p>
           <div class="info-row"><span class="k">在做的项目</span><span class="v">1 个</span></div>
           <div class="info-row"><span class="k">状态</span><span class="v">已定版 v1.0</span></div>
-          <div class="info-row"><span class="k">手记</span><span class="v">11 篇</span></div>
+          <div class="info-row"><span class="k">手记</span><span class="v">14 篇</span></div>
 
           <p class="side-title">常用的</p>
           <div class="chip-row">
@@ -211,6 +211,51 @@
 
     <div class="post-list">
 
+      <a class="post-card" href="posts/intern-drone-week04-pcd.html">
+        <div class="post-card-top">
+          <span class="post-date">2026-11-10</span>
+          <span class="tag done">pcd 已导出</span>
+          <span class="tag">CloudCompare</span>
+          <span class="tag">地图验收</span>
+        </div>
+        <h3>57 万个点：把地图从 RViz 里拿出来</h3>
+        <p>
+          <code>map_file_path</code> 是相对路径，地图会落在你敲命令时所在的目录；
+          <code>/map_save</code> 返回 <code>success: True</code> 也不等于文件写成功了。
+          打开之后状态栏给出 <strong>573017 points</strong>——这个数字说明什么、又不说明什么。
+        </p>
+      </a>
+
+      <a class="post-card" href="posts/intern-drone-week03-fastlio.html">
+        <div class="post-card-top">
+          <span class="post-date">2026-11-10</span>
+          <span class="tag done">地图已出</span>
+          <span class="tag">FAST-LIO</span>
+          <span class="tag">建图</span>
+        </div>
+        <h3>第 4 周：第一次建图，274 秒、286 秒、301 秒</h3>
+        <p>
+          <code>Fixed Frame</code> 那堵墙撞了第二次，这次的答案是 <code>camera_init</code>——
+          不是「哪个名字对」，而是「哪个坐标系现在有数据在发」。
+          三段实拍记录点云怎么从一团结构长成一张闭合的矩形地图。
+        </p>
+      </a>
+
+      <a class="post-card" href="posts/intern-drone-week02-bag.html">
+        <div class="post-card-top">
+          <span class="post-date">2026-11-09</span>
+          <span class="tag done">bag 可用</span>
+          <span class="tag">ros2 bag</span>
+          <span class="tag">数据体检</span>
+        </div>
+        <h3>第 3 周：录包不是按下 record——先在四个地方各量一次</h3>
+        <p>
+          先补上上一篇漏掉的 <code>/livox/imu</code>（话题名在 ≠ 有数据），
+          再用 list / info / hz / bw 四道体检把数据量出来。
+          录坏的包比不录更浪费时间，因为它不报错。
+        </p>
+      </a>
+
       <a class="post-card" href="posts/intern-drone-week01.html">
         <div class="post-card-top">
           <span class="post-date">2026-11-08</span>
@@ -259,21 +304,6 @@
         </p>
       </a>
 
-      <a class="post-card" href="posts/week5-esp32-bridge.html">
-        <div class="post-card-top">
-          <span class="post-date">2026-10-27</span>
-          <span class="tag done">阶段 A / B 已通过</span>
-          <span class="tag">ESP-IDF</span>
-          <span class="tag">MQTT</span>
-        </div>
-        <h3>第 5 周：ESP32 上云，以及「COM 口在」不等于「板子活着」</h3>
-        <p>
-          四个坑全和代码无关：设备管理器里有 COM 口但主芯片根本没上电；
-          自动下载电路不通，esptool 默认复位每次把手动进好的下载模式踢掉；
-          新版安装器让 <code>idf.py</code> 找不到工具链；换热点后 Ubuntu 抱着旧租约不换 IP。
-        </p>
-      </a>
-
     </div>
   </div>
 
@@ -312,7 +342,7 @@
 <footer class="site-footer">
   <div class="wrap-wide">
     <span>qikai-lab · 嵌入式与物联网</span>
-    <span>最近更新：2026-11-08</span>
+    <span>最近更新：2026-11-10</span>
   </div>
 </footer>
 

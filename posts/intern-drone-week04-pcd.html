@@ -1,0 +1,442 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>57 万个点：把地图从 RViz 里拿出来 · 第一次无人机的相关实习</title>
+<meta name="author" content="qikai-lab">
+<link rel="canonical" href="https://qikai-lab.github.io/posts/intern-drone-week04-pcd.html">
+<meta property="og:type" content="article">
+<meta property="og:site_name" content="第一次无人机的相关实习 · 开发手记">
+<meta property="og:url" content="https://qikai-lab.github.io/posts/intern-drone-week04-pcd.html">
+<meta name="description" content="建图的最后一步：把 FAST-LIO 的地图存成 pcd，用 CloudCompare 打开验收。map_file_path 的相对路径陷阱、/map_save 服务、573017 个点说明了什么又不说明什么，以及怎么判断一张点云图是好是坏。">
+<link rel="stylesheet" href="../assets/css/style.css">
+</head>
+<body>
+
+<header class="site-header">
+  <nav class="nav">
+    <a class="brand" href="../index.html">
+      <span class="brand-mark">QL</span>
+      <span>qikai-lab</span>
+    </a>
+    <div class="nav-links">
+      <a href="../index.html">首页</a>
+      <a href="../projects/">项目</a>
+      <a href="../posts/" class="active">手记</a>
+      <a href="../index.html#about">关于</a>
+    </div>
+  </nav>
+</header>
+
+<main class="wrap">
+
+  <div class="post-header">
+    <div class="breadcrumb"><a href="../index.html">首页</a> / <a href="../posts/">手记</a> / 第一次无人机的相关实习</div>
+    <h1>57 万个点：把地图从 RViz 里拿出来</h1>
+    <div class="post-meta">
+      <span>2026-11-10</span>
+      <span class="dot">·</span>
+      <span class="tag done">pcd 已导出</span>
+      <span class="tag">pcd</span>
+      <span class="tag">CloudCompare</span>
+      <span class="tag">地图验收</span>
+      <span class="tag">点云质量</span>
+    </div>
+  </div>
+
+  <article class="prose">
+
+  <p>
+    上一篇最后那张圆角矩形的俯视图，看着很完整。但它<strong>只在内存里</strong>——
+    关掉终端、或者算法进程一退出，这张地图就没了，下次要看得重新走一遍。
+  </p>
+
+  <p>
+    这一篇是把机器里那张图变成硬盘上一个文件的全部过程，
+    以及打开它之后，我怎么判断这一圈到底走得值不值。
+  </p>
+
+  <h2 id="path">一、存之前先确认一件事：<code>map_file_path</code> 是相对路径</h2>
+
+  <p>
+    配置文件里写着：
+  </p>
+
+  <pre>pcd_save:
+  pcd_save_en: true
+  interval: -1
+  map_file_path: "./test.pcd"</pre>
+
+  <p>
+    那个 <code>./</code> 是关键。<strong>它是相对于「你敲下 launch 命令时终端所在的目录」</strong>，
+    不是相对于 FAST-LIO 的源码目录，也不是相对于配置文件。
+  </p>
+
+  <p>
+    这意味着：你在 <code>~</code> 目录启动，地图就落在 <code>~/test.pcd</code>；
+    你在 <code>~/fastlio_ws</code> 启动，就落在 <code>~/fastlio_ws/test.pcd</code>。
+    同一条命令，在不同目录执行，产出物跑到不同地方——而且<strong>它不会告诉你存哪了</strong>。
+  </p>
+
+  <div class="callout warn">
+    <strong>第一次就改成绝对路径，能省掉一次「文件存哪去了」的排查。</strong>
+    <pre style="margin:10px 0 0">map_file_path: "/home/&lt;用户名&gt;/fastlio_ws/src/FAST_LIO_ROS2/PCD/test.pcd"</pre>
+    改完记得确认读的是这一份（<code>--symlink-install</code> 那个坑），然后重启 FAST-LIO 才生效。
+  </div>
+
+  <h2 id="save">二、存：先找服务，再调服务</h2>
+
+  <p>
+    FAST-LIO 不是自动存的，要手动触发。先确认服务在不在：
+  </p>
+
+  <pre>ros2 service list | grep map</pre>
+
+  <p>
+    应该能看到 <code>/map_save</code>。看到它之后再调：
+  </p>
+
+  <pre>ros2 service call /map_save std_srvs/srv/Trigger</pre>
+
+  <p>
+    返回里 <code>success: True</code> 就是存好了。然后去确认文件真的落地了：
+  </p>
+
+  <pre>ls -lh ~/fastlio_ws/src/FAST_LIO_ROS2/PCD/
+ls -lh ./test.pcd                       # 如果没改绝对路径就用这个找</pre>
+
+  <p>
+    <strong>这一步不能跳。</strong><code>success: True</code> 只表示服务调用成功，
+    不表示文件写成功。如果目录不存在、或者没有写权限，
+    服务照样会返回，文件却没有——这种事我遇到过不止一次，
+    在别的场景里也是同一个模式：<strong>接口返回成功 ≠ 结果落地</strong>。
+  </p>
+
+  <h2 id="viewer">三、为什么我用 CloudCompare，而不是 <code>pcl_viewer</code></h2>
+
+  <p>
+    教程里给的查看方式是：
+  </p>
+
+  <pre>pcl_viewer ~/fastlio_ws/src/FAST_LIO_ROS2/PCD/test.pcd</pre>
+
+  <p>
+    它能用，但功能很有限：只能转视角看，量不了尺寸，看不了点数，
+    而且要在板子上装 <code>pcl-tools</code>——在这类 ARM 板子上装 PCL 全套，
+    本身就是一件很重的事（这也是上一篇那个 <code>libusb</code> 符号冲突的来源之一）。
+  </p>
+
+  <p>
+    我改用 CloudCompare 的理由很实际，按重要性排：
+  </p>
+
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr><th>需求</th><th><code>pcl_viewer</code></th><th>CloudCompare</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>看形状</td>
+          <td>可以</td>
+          <td>可以</td>
+        </tr>
+        <tr>
+          <td>看总点数</td>
+          <td>不行</td>
+          <td>状态栏直接显示</td>
+        </tr>
+        <tr>
+          <td>量距离、量尺寸</td>
+          <td>不行</td>
+          <td>可以，工具齐全</td>
+        </tr>
+        <tr>
+          <td>裁剪、切剖面</td>
+          <td>不行</td>
+          <td>可以，<strong>这是判断墙面直不直的关键</strong></td>
+        </tr>
+        <tr>
+          <td>在笔记本上跑</td>
+          <td>要装 PCL 全套</td>
+          <td>有现成安装包，跟 ROS 无关</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <p>
+    最后一行是决定性的。把 pcd 文件从板子上拷到笔记本，
+    用 CloudCompare 打开——<strong>验收这件事本来就不该占板子的资源</strong>，
+    板子只负责采集和建图。
+  </p>
+
+  <p>打开之后是这样：</p>
+
+  <figure>
+    <video controls preload="metadata" playsinline poster="../assets/img/fastlio-cloudcompare-pcd-poster.jpg">
+      <source src="../assets/video/fastlio-cloudcompare-pcd.mp4" type="video/mp4">
+      你的浏览器不支持 video 标签，可以直接
+      <a href="../assets/video/fastlio-cloudcompare-pcd.mp4">下载这段视频</a>。
+    </video>
+    <figcaption>
+      CloudCompare 加载 <code>test.pcd</code> 的过程。
+      底部那行 <code>test.pcd loaded successfully</code> 是它唯一会给的成功提示；
+      右边那个黄色框是裁剪工具，用来框掉无关区域、或者单独量一块的范围
+    </figcaption>
+  </figure>
+
+  <p>对应的静态截图，能看清状态栏：</p>
+
+  <figure>
+    <img src="../assets/img/fastlio-cloudcompare-pcd.jpg" alt="CloudCompare 界面截图：中间是一段按高度着色的点云（以蓝色为主，局部有绿黄红色块），外面套着一个倾斜的黄色裁剪框；底部状态栏显示 loaded 573017 points 与 test.pcd loaded successfully">
+    <figcaption>
+      状态栏那个数字是这一篇唯一的确凿数据：<strong>573017 points</strong>。
+      它前面的 <code>[CloudCompare]</code> 是软件名，
+      后面那行是加载结果。除此之外，这张图里的颜色全部是高度映射，
+      <strong>和精度没有任何关系</strong>
+    </figcaption>
+  </figure>
+
+  <h2 id="number">四、573017 这个数字，说明什么、不说明什么</h2>
+
+  <p>
+    这是我做这个项目以来，第一次拿到一个<strong>可以拿来对账的硬数字</strong>。
+    但正因为它看起来精确，反而容易过度解读。分清楚两边：
+  </p>
+
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr><th>它能说明</th><th>它不能说明</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>这一次保存的地图里确实有 57 万个点，文件不是空的</td>
+          <td>地图准不准——点数多不等于位置对</td>
+        </tr>
+        <tr>
+          <td>点云密度的大致量级，可以用来估「走一圈值多少数据」</td>
+          <td>覆盖面积多大——同样 57 万点，铺满 10 平米和 100 平米是两回事</td>
+        </tr>
+        <tr>
+          <td>和上一次保存的对比，能看出这次是不是少走了路</td>
+          <td>有没有重影、有没有漂移——这些必须看形状</td>
+        </tr>
+        <tr>
+          <td>文件大小是否合理，能不能塞进一张 SD 卡</td>
+          <td>建图质量好不好</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <p>
+    右边那一列才是重点。<strong>点数是一个「有多少」的指标，精度是一个「对不对」的指标，
+    这两件事没有换算关系。</strong>一个把整面墙复制成两层的错误地图，
+    点数可能比正确的还多。
+  </p>
+
+  <p>
+    真要用它做判断，得配一个分母。用 CloudCompare 量出地图的覆盖面积，
+    除一下就是点密度：
+  </p>
+
+  <div class="callout info">
+    <strong>点密度 = 点数 ÷ 覆盖面积，单位 点/平方米。</strong>
+    这个值在同一种雷达、同一种走法下应该大致稳定。
+    如果某一次明显偏低，说明那一圈走得快、漏了区域，或者有话题掉帧。
+    <strong>它衡量的是「采集覆盖得够不够」，不是「建图准不准」。</strong>
+    这两个问题要分开问，用不同的证据回答。
+  </div>
+
+  <h2 id="quality">五、怎么判断一张点云图是好是坏</h2>
+
+  <p>
+    这是我这一周真正学到的东西，也是教程里不会写的部分——
+    因为教程的终点是「能出图」，而实际工作的要求是「这张图能不能用」。
+  </p>
+
+  <p>按可靠性从高到低排，有四个判据：</p>
+
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr><th>#</th><th>看什么</th><th>好的样子</th><th>坏的样子说明什么</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>1</td>
+          <td><strong>闭合处</strong></td>
+          <td>回到起点，同一面墙只有一层</td>
+          <td>两层、错开一段 → 累积漂移，且能直接量出漂了多少</td>
+        </tr>
+        <tr>
+          <td>2</td>
+          <td><strong>墙面的厚度</strong></td>
+          <td>切一个剖面，墙面是一条<strong>细线</strong></td>
+          <td>线变宽、变成带状 → 位姿在抖，或者外参不对</td>
+        </tr>
+        <tr>
+          <td>3</td>
+          <td><strong>地面的平整度</strong></td>
+          <td>同一块地面在同一个高度上</td>
+          <td>地面像波浪 → 俯仰角估计在漂，通常和 IMU 有关</td>
+        </tr>
+        <tr>
+          <td>4</td>
+          <td><strong>悬空的孤立点</strong></td>
+          <td>没有</td>
+          <td>一串飘在空中的点 → 玻璃、镜面反射，或者有人走过</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <p>
+    第 2 条是最有用的一个技巧，也是 CloudCompare 值得用的真正原因：
+    <strong>把地图转成侧视图、切开一道剖面，墙就不再是一面「墙」，而是一条线。</strong>
+    线的粗细就是误差，肉眼就能估出量级，不需要任何计算。
+  </p>
+
+  <p>
+    这一条我是在别的地方学到的，但用在这里刚好：
+    <strong>判断一个三维结果准不准，最有用的往往不是三维视图，而是把它降一维看。</strong>
+  </p>
+
+  <h2 id="stuck">六、pcd 这一环的四个坑</h2>
+
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr><th>#</th><th>现象</th><th>当时的判断</th><th>实际原因</th><th>怎么确认</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>1</td>
+          <td>服务返回成功，但找不到文件</td>
+          <td>存到别的地方了</td>
+          <td><code>map_file_path</code> 是相对路径，落在启动时的当前目录</td>
+          <td>改成绝对路径；或 <code>find ~ -name "*.pcd" -newermt "-10 minutes"</code></td>
+        </tr>
+        <tr>
+          <td>2</td>
+          <td>改了 <code>map_file_path</code>，还是存到老地方</td>
+          <td>配置没生效</td>
+          <td>读的是 <code>install/</code> 里的旧副本</td>
+          <td>编译加 <code>--symlink-install</code>；改完要重启 FAST-LIO</td>
+        </tr>
+        <tr>
+          <td>3</td>
+          <td>pcd 打开只有几个点</td>
+          <td>文件损坏</td>
+          <td>存的时候地图还没累积完，或者在建图刚开始就调了服务</td>
+          <td>走完一整圈再存；对比 <code>CloudMap</code> 在 RViz 里的样子</td>
+        </tr>
+        <tr>
+          <td>4</td>
+          <td>地图里凭空多出一面墙</td>
+          <td>算法算错了</td>
+          <td>玻璃/镜面反射，点被「折」到了不存在的位置</td>
+          <td>回到现场看那个方位有什么；换角度重走一段对比</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <p>
+    第 4 条要特别说明一下：<strong>它不是 bug，也不能靠调参解决。</strong>
+    雷达打在玻璃上，一部分穿透、一部分反射，算法无法分辨哪个是真的。
+    能做的是知道它存在、建图时避开，或者在后期手动裁掉。
+    <strong>把它当成「传感器物理限制」而不是「程序错误」，判断会清楚很多。</strong>
+  </p>
+
+  <h2 id="wrapup">七、这四篇连起来是什么</h2>
+
+  <p>
+    从第一周到现在，这条链走完了：
+  </p>
+
+  <ol>
+    <li>
+      <strong>让数据出来</strong>（第 1–2 周）——网段、host_ip、launch 选型、Fixed Frame。
+      产出是 RViz 里一团能看的点云。
+    </li>
+    <li>
+      <strong>让数据可复现</strong>（第 3 周）——补上 IMU、四道体检、动作规范。
+      产出是一份可以反复用的 bag。
+    </li>
+    <li>
+      <strong>让算法跑通</strong>（第 4 周）——编译、配置、<code>camera_init</code>。
+      产出是一张会随着走动能看见它在长的地图。
+    </li>
+    <li>
+      <strong>让结果可验收</strong>（本篇）——pcd、CloudCompare、四个判据。
+      产出是一个文件和一套判断它好坏的方法。
+    </li>
+  </ol>
+
+  <p>
+    回头看，真正花时间的从来不是算法本身。
+    <strong>四篇里写到的坑一共二十个，其中属于「代码写错」的一个都没有。</strong>
+    全部集中在三件事上：<strong>数据有没有到、配置读的是哪一份、坐标系对不对。</strong>
+    这三件事有个共同点——它们都不报错。
+  </p>
+
+  <p>
+    所以这个系列如果只留一句话，我留这句：
+    <strong>不报错的失败最贵。</strong>
+    遇到问题，先花五分钟把「现在卡在哪一层」定下来，
+    比直接改参数快得多。
+  </p>
+
+  <h2 id="next">八、下一步</h2>
+
+  <p>这条链到这里是通的，但它离「无人机能自己飞」还差得远。明确的缺口有四个：</p>
+
+  <ul>
+    <li>
+      <strong>TF 树还没建。</strong>
+      现在只有 <code>camera_init</code>，没有 <code>base_link</code>、没有 <code>body</code>。
+      要把位姿交给飞控，这棵树必须先立起来。
+    </li>
+    <li>
+      <strong>还没和飞控对接。</strong>
+      位姿要经 MAVROS 送进 PX4，中间涉及坐标系约定
+      （ENU 与 NED 的转换，这一步错了飞机就会往反方向飞）。
+    </li>
+    <li>
+      <strong>还没上机飞。</strong>
+      所有数据都是人拎着雷达走的。飞行带来的振动、加速度、快速姿态变化，
+      是完全不同量级的输入。
+    </li>
+    <li>
+      <strong>没有回环检测。</strong>
+      所以漂移只能控制、不能消除。要走大场地，这一块迟早要补。
+    </li>
+  </ul>
+
+  <p>
+    下一篇打算从 TF 那棵树开始写——因为它同时是两个东西的前提：
+    位姿要交给飞控，得先有树；外参要真正固定下来，也得先有树。
+  </p>
+
+  <div class="post-footer">
+    <a class="btn" href="intern-drone-week03-fastlio.html">← 上一篇：第一次建图</a>
+    <a class="btn btn-primary" href="index.html">看全部手记 →</a>
+  </div>
+
+  </article>
+
+</main>
+
+<footer class="site-footer">
+  <div class="wrap-wide">
+    <span>qikai-lab · 第一次无人机的相关实习</span>
+    <span>最近更新：2026-11-10</span>
+  </div>
+</footer>
+
+</body>
+</html>

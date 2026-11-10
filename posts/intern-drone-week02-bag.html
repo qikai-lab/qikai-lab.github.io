@@ -1,0 +1,490 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>第 3 周：录包不是按下 record——先在四个地方各量一次 · 第一次无人机的相关实习</title>
+<meta name="author" content="qikai-lab">
+<link rel="canonical" href="https://qikai-lab.github.io/posts/intern-drone-week02-bag.html">
+<meta property="og:type" content="article">
+<meta property="og:site_name" content="第一次无人机的相关实习 · 开发手记">
+<meta property="og:url" content="https://qikai-lab.github.io/posts/intern-drone-week02-bag.html">
+<meta name="description" content="第三周：给 FAST-LIO 准备离线数据。录包之前先补上上一篇漏掉的 /livox/imu，再用 topic list / info / hz / bw 四道体检把数据量出来，最后定下录制时的动作规范——静止几秒、慢走、闭合回路。">
+<link rel="stylesheet" href="../assets/css/style.css">
+</head>
+<body>
+
+<header class="site-header">
+  <nav class="nav">
+    <a class="brand" href="../index.html">
+      <span class="brand-mark">QL</span>
+      <span>qikai-lab</span>
+    </a>
+    <div class="nav-links">
+      <a href="../index.html">首页</a>
+      <a href="../projects/">项目</a>
+      <a href="../posts/" class="active">手记</a>
+      <a href="../index.html#about">关于</a>
+    </div>
+  </nav>
+</header>
+
+<main class="wrap">
+
+  <div class="post-header">
+    <div class="breadcrumb"><a href="../index.html">首页</a> / <a href="../posts/">手记</a> / 第一次无人机的相关实习</div>
+    <h1>第 3 周：录包不是按下 record——先在四个地方各量一次</h1>
+    <div class="post-meta">
+      <span>2026-11-09</span>
+      <span class="dot">·</span>
+      <span class="tag done">bag 可用</span>
+      <span class="tag">ros2 bag</span>
+      <span class="tag">Livox IMU</span>
+      <span class="tag">离线复现</span>
+      <span class="tag">数据体检</span>
+    </div>
+  </div>
+
+  <article class="prose">
+
+  <p>
+    上一周结束的时候，RViz 里能看见点云了。但「能看见」和「能拿来做事」之间还差一层：
+    下一次开机，点云就不一样了。挪一次桌子、换一个角度、雷达转半圈，
+    屏幕上那团东西全变——这意味着<strong>任何调参结论都没法复现</strong>。
+    这一周的全部工作，就是把这个「现场」冻成一份文件。
+  </p>
+
+  <h2 id="why">一、为什么先录包，而不是先跑算法</h2>
+
+  <p>
+    按顺序本来应该先编译 FAST-LIO、先跑第一次建图。我把它反过来了，先花一天录包，原因很实际：
+  </p>
+
+  <ul>
+    <li>
+      <strong>真机一轮太慢。</strong>
+      插电、连网、起驱动、摆雷达、走一圈，一轮下来十几分钟，
+      中间任何一个参数改了都要重来。一天最多跑七八轮。
+    </li>
+    <li>
+      <strong>算法调参要的是「同一份数据，不同的参数」。</strong>
+      只有把输入固定住，才能判断「这次效果好」是因为参数对了，
+      还是因为这次走得比较稳。
+    </li>
+    <li>
+      <strong>出问题的时候，现场已经没了。</strong>
+      建图漂了，你想回去看看到底哪一段开始歪的——如果没录包，只能重新走一遍，
+      而重新走的那一遍不会复现同一个错误。
+    </li>
+  </ul>
+
+  <p>
+    但录包这件事有个陷阱，我一开始没意识到：<strong>录坏的包比不录更浪费时间。</strong>
+    因为它不会报错。文件生成了、大小正常、<code>bag info</code> 也列得出话题，
+    等你在算法那边折腾两小时、怀疑了三个参数之后，才会发现包里根本没有 IMU。
+  </p>
+
+  <div class="callout">
+    <strong>所以顺序应该是：先验收数据，再相信数据。</strong>
+    这一周我给自己定了个规矩——<strong>按下 record 之前，数据必须先过四道体检；
+    录完之后，再用 bag info 过第五道。</strong>后面几节就是这五道具体是什么。
+  </div>
+
+  <h2 id="imu">二、先把上一篇漏掉的东西补上：<code>/livox/imu</code></h2>
+
+  <p>
+    上一篇的结尾我写了一句：RK3588 那屏 <code>topic list</code> 里只有 <code>/livox/lidar</code>，
+    当时觉得「点云能看就行」。这个判断在那一周是成立的——RViz 只要点云，
+    IMU 有没有都不影响画面。但它不成立在下一周。
+  </p>
+
+  <p>
+    FAST-LIO 是<strong>激光-惯性紧耦合</strong>：雷达负责几何，IMU 负责在两次扫描之间推算运动。
+    没有 IMU 不是「精度差一点」，是<strong>根本跑不起来</strong>——
+    它没法给出两帧之间的位姿初值，点云也就配不准。
+  </p>
+
+  <p>先确认它在不在、是什么类型、有没有频率：</p>
+
+  <pre>ros2 topic list | grep livox
+
+ros2 topic info /livox/imu
+ros2 topic info /livox/lidar
+
+ros2 topic hz /livox/imu
+ros2 topic hz /livox/lidar</pre>
+
+  <p>正确的组合是这两个，缺一不可：</p>
+
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr><th>话题</th><th>类型</th><th>期望频率</th><th>类型不对说明什么</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><code>/livox/lidar</code></td>
+          <td><code>livox_ros_driver2/msg/CustomMsg</code></td>
+          <td>约 10 Hz</td>
+          <td>如果是 <code>sensor_msgs/msg/PointCloud2</code>，说明 launch 用错了（见上一篇第六节）</td>
+        </tr>
+        <tr>
+          <td><code>/livox/imu</code></td>
+          <td><code>sensor_msgs/msg/Imu</code></td>
+          <td>约 200 Hz</td>
+          <td>如果根本没有这个话题，多半是驱动的 <code>publish_freq</code> 或 IMU 相关开关没开</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <p>
+    这里有个容易误判的地方：<strong><code>ros2 topic list</code> 里有 <code>/livox/imu</code>，
+    不等于它在发数据。</strong>话题是节点启动时就注册好的，
+    哪怕一帧都没发出去，名字也会挂在那儿。<code>topic hz</code> 才是真的在数。
+    我第一次就是被这个话题名骗了几分钟。
+  </p>
+
+  <h2 id="check">三、四道体检：list / info / hz / bw</h2>
+
+  <p>
+    这四条命令分别回答四个不同的问题，不能互相替代。按顺序走一遍，
+    数据链路上任何一层断了都能单独定位：
+  </p>
+
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr><th>命令</th><th>回答的问题</th><th>不正常时的含义</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><code>ros2 topic list</code></td>
+          <td>节点有没有把话题注册出来</td>
+          <td>驱动没起来，或者 source 的环境不对</td>
+        </tr>
+        <tr>
+          <td><code>ros2 topic info &lt;topic&gt;</code></td>
+          <td>类型对不对、有几个发布者</td>
+          <td>Publisher count 为 0 = 只有订阅没有发布，名字在但是空的</td>
+        </tr>
+        <tr>
+          <td><code>ros2 topic hz &lt;topic&gt;</code></td>
+          <td>实际频率是多少</td>
+          <td>显示 0 或不输出 = 数据没在流动；忽高忽低 = 带宽或算力紧张</td>
+        </tr>
+        <tr>
+          <td><code>ros2 topic bw &lt;topic&gt;</code></td>
+          <td>每秒吃多少字节</td>
+          <td>用来算 bag 会有多大、磁盘够不够、SD 卡写不写得动</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <p>
+    第四条是我这次新加的习惯，也是最容易被跳过的一条。录包之前先量一次带宽：
+  </p>
+
+  <pre>ros2 topic bw /livox/lidar
+ros2 topic bw /livox/imu</pre>
+
+  <p>
+    两个数加起来乘 60，就是一分钟 bag 的大致体积；再乘你打算走多久，
+    就知道这块盘够不够。<strong>这件事必须在按 record 之前做</strong>——
+    录到一半磁盘满了，rosbag 不会优雅地停下来告诉你「我只存了一半」，
+    它会给你一个看起来完整、实际缺尾的文件。
+  </p>
+
+  <div class="callout">
+    <strong>一条经验：先 <code>df -h</code> 看一眼，再决定走多久。</strong>
+    板子上的存储通常是 eMMC 或者一张 SD 卡，可用空间远小于你笔记本的直觉。
+    我现在的做法是<strong>每次录之前把上一次的包先挪走或删掉</strong>，
+    保证板子上永远留着一份完整 bag 的空间余量，而不是等它报错。
+  </div>
+
+  <h2 id="topic">四、record 到底该录哪几个话题</h2>
+
+  <p>
+    <code>ros2 bag record</code> 有两种写法，差别比看起来大：
+  </p>
+
+  <pre># 写法 A：录所有话题
+ros2 bag record -a
+
+# 写法 B：只录指定的
+ros2 bag record /livox/lidar /livox/imu</pre>
+
+  <p>
+    <code>-a</code> 看起来省事，实际会额外录进 <code>/rosout</code>、<code>/parameter_events</code>、
+    <code>/tf</code>、<code>/clock</code> 这一堆东西。它们单个都不大，但有两个副作用：
+  </p>
+
+  <ul>
+    <li>
+      <strong>回放时会有别人在说话。</strong>
+      如果你回放的时候还开着别的节点，<code>/tf</code> 和 <code>/clock</code>
+      会和当前系统里的打架，出现一些很难解释的现象。
+    </li>
+    <li>
+      <strong>排障时会看到假线索。</strong>
+      bag 里有一堆话题，<code>bag info</code> 一屏刷不完，
+      反而看不出「我到底该关心哪两个」。
+    </li>
+  </ul>
+
+  <p>
+    所以我的写法 B 是显式列出这两个。第三个可选的是 <code>/tf</code>——
+    如果你在建图时手动发布过静态 TF，把它一起录下来，回放时才完整。
+  </p>
+
+  <p>另外两个细节，写在这里省得以后忘：</p>
+
+  <pre>mkdir -p ~/bags
+cd ~/bags
+
+# 指定输出目录名，默认是 rosbag2_2026_11_09-10_33_00 这种时间戳
+ros2 bag record -o walk01 /livox/lidar /livox/imu</pre>
+
+  <p>
+    一是<strong>一定要先 <code>cd</code> 到一个你找得到的地方</strong>。
+    ROS 2 Humble 的 bag 默认格式是 sqlite3，落地成 <code>.db3</code> 文件加一个 <code>metadata.yaml</code>，
+    整个是一个目录。它不会问你要存哪，就存在当前目录下。
+  </p>
+
+  <p>
+    二是<strong>停止要用 Ctrl-C，然后等它自己退出来</strong>。
+    rosbag 在退出时才把 <code>metadata.yaml</code> 写完，
+    如果你直接关终端、或者 Ctrl-C 之后立刻再按一次，
+    文件可能是完整的 <code>.db3</code> 但没有元数据——这种包 <code>bag info</code> 会报错，
+    而 <code>.db3</code> 本身却打得开，很容易误判成「包是好的，是工具坏了」。
+  </p>
+
+  <h2 id="motion">五、录制时的动作规范：这几条不是讲究，是算法要求</h2>
+
+  <p>
+    这一部分是我这周栽得最实的一次。第一次录的时候我想「不就是走一圈」，
+    从桌上拿起雷达就走，结果包拿回去跑出来一团糊。
+  </p>
+
+  <p>
+    原因不在包，在走路的方式。FAST-LIO 这类算法对输入运动有几个隐含前提，
+    违反了不会报错，只会让结果慢慢歪掉：
+  </p>
+
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr><th>动作</th><th>为什么必须这样</th><th>违反之后的现象</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><strong>开头静止 3–5 秒</strong></td>
+          <td>IMU 要在这个静止段里估零偏（陀螺仪的零点漂移）</td>
+          <td>整段地图从一开始就是斜的，越走越歪</td>
+        </tr>
+        <tr>
+          <td><strong>慢速平移，别甩</strong></td>
+          <td>两帧之间的位移要靠 IMU 积分推，角速度太大误差就爆</td>
+          <td>转弯处点云重影、墙变成两层</td>
+        </tr>
+        <tr>
+          <td><strong>走闭合回路，回到起点</strong></td>
+          <td>闭合是唯一能靠肉眼判断「累积误差有多大」的方式</td>
+          <td>看不出漂移量，以为建图是准的</td>
+        </tr>
+        <tr>
+          <td><strong>有结构的环境</strong></td>
+          <td>算法靠墙面、柱子、地面这些平面做约束</td>
+          <td>空旷场地或长直走廊里，位置会沿走廊方向漂</td>
+        </tr>
+        <tr>
+          <td><strong>避开玻璃和大面积反光</strong></td>
+          <td>玻璃要么穿透要么乱反射，点会飞到不存在的地方</td>
+          <td>地图里出现一串悬空的点，或者凭空多出一面墙</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <p>
+    前两条是<strong>只要照做就有效</strong>的，后三条是环境限制，
+    有时候没得选——那就至少知道自己拿到的数据里带着什么缺陷。
+  </p>
+
+  <p>
+    为了让雷达能真正离开桌子走起来，这周把供电改成了电池直供：
+  </p>
+
+  <figure>
+    <img src="../assets/img/fastlio-bench-battery.jpg" style="max-width:380px" alt="竖拍实拍：一块黑色锂电池立在绿色小桌上，带提手和红黑硅胶线，接头是黄色 XT60；旁边白色外壳的 Livox Mid-360 雷达也接着同样的红黑线和 XT60 接头；左下角是一块带散热片的开发板">
+    <figcaption>
+      这一周真正的变化不是软件，是<strong>供电从插座换成了电池</strong>。
+      桌上那块黑色电池带提手、走 XT60 黄头，雷达也用同一个接头——
+      能拎着走，才谈得上「走一圈」。之前插着电源线的时候，
+      雷达的活动半径就是那根线的长度
+    </figcaption>
+  </figure>
+
+  <p>
+    顺手记一下这块板子的接线，因为它决定了录制时能跑多久：
+  </p>
+
+  <figure>
+    <img src="../assets/img/fastlio-bench-board.jpg" style="max-width:400px" alt="俯拍开发板：带黑色散热片的主板放在木桌上，板上可见排针、多个 USB 口、HDMI、网口、M.2 与 TF 卡槽，板子一角贴着白色标签，下方伸出一根黑色 WiFi 天线，四周是显示器底座和一排线缆">
+    <figcaption>
+      板子本身没有风扇，靠那块黑色散热片被动散热。
+      录制时 CPU 要同时跑驱动和 rosbag 写盘，<strong>散热和磁盘是这一环里最先到瓶颈的两个东西</strong>，
+      比算力更早出问题
+    </figcaption>
+  </figure>
+
+  <h2 id="verify">六、录完必做：拿 <code>bag info</code> 对一遍</h2>
+
+  <p>
+    录完不要急着去跑算法，先看这个：
+  </p>
+
+  <pre>ros2 bag info ~/bags/walk01</pre>
+
+  <p>输出里我最关心四行，逐一对照：</p>
+
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr><th>看哪一行</th><th>正常应该是什么</th><th>不对说明什么</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><code>Duration</code></td>
+          <td>和你实际走的时长接近</td>
+          <td>明显短 = 中途停了，或者磁盘写不动</td>
+        </tr>
+        <tr>
+          <td><code>Bag size</code></td>
+          <td>和你用 <code>topic bw</code> 估的量级一致</td>
+          <td>远小于估算 = 后半段丢数据了</td>
+        </tr>
+        <tr>
+          <td><code>Messages</code></td>
+          <td>点云条数 ≈ 时长 × 10，IMU 条数 ≈ 时长 × 200</td>
+          <td>IMU 条数是 0 或远低于预期 = 这包废了，别浪费时间往下跑</td>
+        </tr>
+        <tr>
+          <td>Topic 列表</td>
+          <td>只有你指定的那几个</td>
+          <td>多出一堆 = 用了 <code>-a</code>，或者环境里有别的节点在发</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <p>
+    <strong>第三条是最值得算的。</strong>点云和 IMU 的条数比例应该稳定在 1:20 左右
+    （10 Hz 对 200 Hz）。如果这个比例明显偏了，说明有话题在中途掉帧——
+    这种情况在地图上是看不出来的，只会在算法里表现成「某一段突然变糊」，
+    而你会去怀疑参数。
+  </p>
+
+  <h2 id="stuck">七、这一周踩到的四个坑</h2>
+
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr><th>#</th><th>现象</th><th>当时的判断</th><th>实际原因</th><th>怎么确认</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>1</td>
+          <td><code>topic list</code> 里有 <code>/livox/imu</code>，但算法说没数据</td>
+          <td>话题存在就是有数据</td>
+          <td>话题被注册了，但没有发布者在发</td>
+          <td><code>topic info</code> 看 Publisher count；<code>topic hz</code> 看实际频率</td>
+        </tr>
+        <tr>
+          <td>2</td>
+          <td>录完的包 <code>bag info</code> 报错</td>
+          <td>rosbag 有 bug</td>
+          <td>Ctrl-C 之后又按了一次，<code>metadata.yaml</code> 没写完</td>
+          <td>目录里看有没有 <code>metadata.yaml</code>；只按一次 Ctrl-C 并等它退出</td>
+        </tr>
+        <tr>
+          <td>3</td>
+          <td>走去别处找包，找不到</td>
+          <td>录失败了</td>
+          <td>没 <code>cd</code>，包落在当时的当前目录</td>
+          <td>录之前 <code>pwd</code> 一下，或用 <code>-o</code> 指定绝对路径</td>
+        </tr>
+        <tr>
+          <td>4</td>
+          <td>录到一半自动结束</td>
+          <td>驱动崩了</td>
+          <td>磁盘满，rosbag 写不进去</td>
+          <td><code>df -h</code>；录之前清掉旧包</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <p>
+    这四个坑有个共同特征，和上一篇那六个一模一样：<strong>系统都不报错。</strong>
+    第 1 条会一路走到算法里才暴露，第 2 条会让你以为工具坏了，
+    第 3 条让你以为录制失败，第 4 条给你一个缺尾但看起来完整的文件。
+  </p>
+
+  <p>
+    所以这一周最大的收获其实不是「会录包了」，而是把上一篇那个习惯又往前推了一步：
+    上一篇问的是<strong>「数据到了哪一层」</strong>，
+    这一周问的是<strong>「数据到齐了没有、够不够用」</strong>。
+    前者解决「有没有」，后者解决「能不能用」。
+  </p>
+
+  <h2 id="next">八、下一步</h2>
+
+  <p>
+    包有了，接下来才是真正要看的：把这份固定的输入喂给 FAST-LIO，
+    看它能把这一圈走成什么形状。那部分单独写了一篇——
+    因为第一次建图的过程里有三个时刻值得单独记下来（274 秒、286 秒、301 秒），
+    它恰好说明了「点云在长」这件事到底是什么样子。
+  </p>
+
+  <p>
+    另外还有两件这周想做但压住没做的：
+  </p>
+
+  <ul>
+    <li>
+      <strong>没有校准时间同步。</strong>
+      现在 <code>time_sync_en</code> 是关的，靠的是雷达内部已经把点云和 IMU 打过时间戳。
+      要真正上机、要跑长距离，这一步迟早要做，但不是在第一次建图之前。
+    </li>
+    <li>
+      <strong>没有做外参标定。</strong>
+      还是用配置里默认的雷达-IMU 相对位姿。现在雷达和板子是「摆在桌上」的关系，
+      量出来的外参没有意义——等装到机身上再算。
+    </li>
+  </ul>
+
+  <p>
+    这两件事都属于「知道它重要，但现在做是白做」。判断依据和上一篇一样：
+    <strong>物理安装还没定，任何依赖安装关系的参数都是暂时的。</strong>
+  </p>
+
+  <div class="post-footer">
+    <a class="btn" href="index.html">← 全部手记</a>
+    <a class="btn btn-primary" href="intern-drone-week03-fastlio.html">看下一篇：FAST-LIO 第一次建图 →</a>
+  </div>
+
+  </article>
+
+</main>
+
+<footer class="site-footer">
+  <div class="wrap-wide">
+    <span>qikai-lab · 第一次无人机的相关实习</span>
+    <span>最近更新：2026-11-10</span>
+  </div>
+</footer>
+
+</body>
+</html>

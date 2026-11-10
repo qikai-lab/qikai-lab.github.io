@@ -1,0 +1,475 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>第 4 周：第一次建图，274 秒、286 秒、301 秒 · 第一次无人机的相关实习</title>
+<meta name="author" content="qikai-lab">
+<link rel="canonical" href="https://qikai-lab.github.io/posts/intern-drone-week03-fastlio.html">
+<meta property="og:type" content="article">
+<meta property="og:site_name" content="第一次无人机的相关实习 · 开发手记">
+<meta property="og:url" content="https://qikai-lab.github.io/posts/intern-drone-week03-fastlio.html">
+<meta name="description" content="第四周：把录好的包喂给 FAST-LIO，第一次把房间走成一张地图。编译、mid360.yaml 的五个关键参数、Fixed Frame 为什么是 camera_init，以及三个时刻的点云生长实录。">
+<link rel="stylesheet" href="../assets/css/style.css">
+</head>
+<body>
+
+<header class="site-header">
+  <nav class="nav">
+    <a class="brand" href="../index.html">
+      <span class="brand-mark">QL</span>
+      <span>qikai-lab</span>
+    </a>
+    <div class="nav-links">
+      <a href="../index.html">首页</a>
+      <a href="../projects/">项目</a>
+      <a href="../posts/" class="active">手记</a>
+      <a href="../index.html#about">关于</a>
+    </div>
+  </nav>
+</header>
+
+<main class="wrap">
+
+  <div class="post-header">
+    <div class="breadcrumb"><a href="../index.html">首页</a> / <a href="../posts/">手记</a> / 第一次无人机的相关实习</div>
+    <h1>第 4 周：第一次建图，274 秒、286 秒、301 秒</h1>
+    <div class="post-meta">
+      <span>2026-11-10</span>
+      <span class="dot">·</span>
+      <span class="tag done">地图已出</span>
+      <span class="tag">FAST-LIO</span>
+      <span class="tag">camera_init</span>
+      <span class="tag">Mid-360S</span>
+      <span class="tag">建图</span>
+    </div>
+  </div>
+
+  <article class="prose">
+
+  <p>
+    上一篇的结尾是「包有了」。这一篇是包的去处。
+    编译、配置、启动这些步骤本身不复杂，教程里都有，我按自己的顺序走了一遍。
+    真正值得记下来的是中间那段：<strong>点云是怎么一点点长成一张地图的</strong>，
+    以及我在同一个地方第二次撞了同一堵墙。
+  </p>
+
+  <h2 id="build">一、先把环境摆平</h2>
+
+  <p>
+    FAST-LIO 的 ROS 2 版本不在官方仓库里，用的是移植版。
+    编译前有个前提：<strong>Livox 的工作空间必须先 source</strong>，
+    因为 FAST-LIO 依赖 <code>livox_ros_driver2/msg/CustomMsg</code> 这个自定义消息类型。
+    少了这一步，编译到一半会报找不到消息头文件。
+  </p>
+
+  <pre>source /opt/ros/humble/setup.bash
+source ~/livox_ws/install/setup.bash
+
+mkdir -p ~/fastlio_ws/src
+cd ~/fastlio_ws/src
+git clone https://github.com/Ericsii/FAST_LIO_ROS2.git --recursive
+
+cd ~/fastlio_ws
+rosdep install --from-paths src --ignore-src -y
+colcon build --symlink-install</pre>
+
+  <p>
+    <code>--recursive</code> 不能省。这个仓库带了子模块（ikd-Tree 之类），
+    不加这个参数克隆下来是空目录，编译时会报一堆找不到的源文件，
+    而错误信息指向的是 FAST-LIO 自己的代码，很容易误判成版本不兼容。
+  </p>
+
+  <p>
+    <code>--symlink-install</code> 也建议加上，理由和上一篇第三节那个坑一样：
+    它让 <code>install/</code> 里的配置指向源码，改 yaml 不用重新编译。
+    不加的话，你改的是 <code>src/</code> 里的配置，运行时读的却是 <code>install/</code> 里的旧副本，
+    <strong>改了没反应，还不报错</strong>。
+  </p>
+
+  <div class="callout warn">
+    <strong>如果编译时内存不够、进程被杀。</strong>
+    这类板子的内存比笔记本紧张，<code>colcon</code> 默认按 CPU 核数并行编译，
+    很容易在链接阶段 OOM。降并行数就行：
+    <pre style="margin:10px 0 0">colcon build --symlink-install --parallel-workers 2</pre>
+  </div>
+
+  <h2 id="yaml">二、mid360.yaml：只动这五个参数</h2>
+
+  <p>
+    配置目录里有 <code>avia.yaml</code>、<code>horizon.yaml</code>、<code>mid360.yaml</code>、
+    <code>ouster64.yaml</code>、<code>velodyne.yaml</code> 几份，Mid-360S 直接用自带的 <code>mid360.yaml</code>。
+  </p>
+
+  <p>
+    第一次跑通<strong>不要动参数</strong>。这不是保守，是因为同时改多个参数之后，
+    出了效果你分不清是哪个起的作用。要确认的只有下面五个：
+  </p>
+
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr><th>参数</th><th>值</th><th>为什么是它</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><code>common.lid_topic</code></td>
+          <td><code>/livox/lidar</code></td>
+          <td>必须和驱动实际发布的话题一字不差，包括前面的斜杠</td>
+        </tr>
+        <tr>
+          <td><code>common.imu_topic</code></td>
+          <td><code>/livox/imu</code></td>
+          <td>就是上一篇补上的那个话题。这里是它唯一的用处</td>
+        </tr>
+        <tr>
+          <td><code>preprocess.lidar_type</code></td>
+          <td><code>1</code></td>
+          <td>Livox 系列固定为 1。填错的话点云会被按别的雷达格式解析，出来是乱码点</td>
+        </tr>
+        <tr>
+          <td><code>preprocess.timestamp_unit</code></td>
+          <td><code>3</code></td>
+          <td>时间戳单位。<strong>不要随意改</strong>——单位错了不会报错，只会让位姿逐渐发散</td>
+        </tr>
+        <tr>
+          <td><code>mapping.extrinsic_est_en</code></td>
+          <td><code>true</code></td>
+          <td>让算法在线估计雷达和 IMU 的相对位姿，先跑起来再说</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <p>
+    另外 <code>pcd_save</code> 下面两项先设好，虽然这一篇还用不到：
+  </p>
+
+  <pre>pcd_save:
+  pcd_save_en: true
+  interval: -1          # -1 = 只在结束时存一份，不是每隔多少帧存一次</pre>
+
+  <p>
+    <code>interval: -1</code> 这一行值得单独说。见到的默认值五花八门，
+    有人写 10、写 50，那意思是「每 N 帧存一个 pcd」，走一圈能给你几百个文件。
+    <strong>第一次建图要的是一张完整地图，不是一堆碎片</strong>，
+    所以这里必须是 -1。
+  </p>
+
+  <h2 id="launch">三、启动：两行命令，两个终端</h2>
+
+  <pre># 终端 1：雷达驱动
+source /opt/ros/humble/setup.bash
+source ~/livox_ws/install/setup.bash
+ros2 launch livox_ros_driver2 msg_MID360s_launch.py</pre>
+
+  <pre># 终端 2：FAST-LIO
+source /opt/ros/humble/setup.bash
+source ~/livox_ws/install/setup.bash
+source ~/fastlio_ws/install/setup.bash
+ros2 launch fast_lio mapping.launch.py config_file:=mid360.yaml</pre>
+
+  <p>
+    三个 <code>source</code> 一行都不能少，而且是<strong>按顺序</strong>：
+    ROS 基础环境 → 雷达驱动（提供 CustomMsg）→ FAST-LIO 自己。
+  </p>
+
+  <p>
+    这里重申上一篇第六节那个点，因为它在这一步最容易复发：
+    <strong>启动雷达必须用 <code>msg_MID360s_launch.py</code>，不是 <code>rviz_MID360s_launch.py</code>。</strong>
+    前者发的是 <code>CustomMsg</code>，后者发的是 <code>PointCloud2</code>。
+    对 RViz 来说两种都能显示、看起来一模一样，但 FAST-LIO 只认前者。
+  </p>
+
+  <div class="callout">
+    <strong>如果板子是无头运行的（SSH 连上去跑）。</strong>
+    默认 launch 会尝试打开 RViz，远程没有图形环境就会报
+    <code>qt.qpa.xcb: could not connect to display</code>。
+    这个错误<strong>只影响 RViz，不代表算法有问题</strong>。加 <code>rviz:=false</code> 关掉，
+    然后在另一台有屏幕的机器上看话题。我这边是板子直接接显示器，所以没关。
+  </div>
+
+  <h2 id="frame">四、Fixed Frame = <code>camera_init</code>：同一堵墙，第二次</h2>
+
+  <p>
+    第一周我在 RViz 里看到一片空白，原因是 <code>Fixed Frame</code> 还是默认的 <code>map</code>，
+    而系统里根本没有这个坐标系。那一周的解是改成 <code>livox_frame</code>——因为当时只有雷达自己。
+  </p>
+
+  <p>
+    这一周打开 RViz，画面又是空的。原因<strong>完全一样</strong>：
+    <code>Fixed Frame</code> 不对。只不过这次的正确答案换成了 <code>camera_init</code>。
+  </p>
+
+  <figure>
+    <img src="../assets/img/fastlio-rviz-map-1120.jpg" alt="RViz2 界面照片：左侧 Displays 面板展开 Global Options，Fixed Frame 为 camera_init，Frame Rate 30，Global Status 显示 Fixed Frame [OK]，下方列出 TF、Odometry、Path、CloudRegistered、CloudEffective、CloudMap 六个显示项；中间是一张俯视的矩形点云地图，按高度着色，从紫蓝到绿黄">
+    <figcaption>
+      这一屏有两个地方值得看。一是 <code>Fixed Frame</code> 已经是 <code>camera_init</code>；
+      二是它下面那行 <strong><code>Global Status: Fixed Frame [OK]</code></strong>——
+      RViz 其实一直在明确告诉你坐标系对不对，只是默认状态下这块面板是折叠的，
+      空白的时候人的第一反应是去翻话题，不会想到先展开这里
+    </figcaption>
+  </figure>
+
+  <p>
+    两次撞墙，其实是同一件事的两个面。我把它总结成一句：
+  </p>
+
+  <div class="callout success">
+    <strong><code>Fixed Frame</code> 必须是一个「此刻真的存在」的坐标系。</strong>
+    它不能是默认值，也不能是「逻辑上应该有」的名字。
+    第一周系统里只有 <code>livox_frame</code>，所以是它；
+    这一周 FAST-LIO 发布了 <code>camera_init</code>，所以是它。
+    <strong>判断标准不是「哪个名字对」，而是「哪个坐标系现在有数据在发」。</strong>
+    查法：<code>ros2 run tf2_tools view_frames</code>，或者直接看 <code>/tf</code> 有没有人发。
+  </div>
+
+  <p>
+    <code>camera_init</code> 这个名字有点误导——它不是相机的坐标系，
+    而是 FAST-LIO 内部定义的<strong>世界原点</strong>，就是「建图开始时雷达所在的那个位置」。
+    整张地图都以它为基准，所以它天然存在、天然有数据，也不需要额外的 TF 去连。
+  </p>
+
+  <p>六个显示项对应的话题，一并记在这里：</p>
+
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr><th>RViz 显示项</th><th>话题</th><th>看它干什么</th></tr>
+      </thead>
+      <tbody>
+        <tr><td><code>Odometry</code></td><td><code>/Odometry</code></td><td>当前位姿。它不动就说明算法没输出</td></tr>
+        <tr><td><code>Path</code></td><td><code>/path</code></td><td>走过的轨迹。漂移在这里最直观——闭合处对不上就是漂了</td></tr>
+        <tr><td><code>CloudRegistered</code></td><td><code>/cloud_registered</code></td><td>当前帧配准后的点云，动得最快</td></tr>
+        <tr><td><code>CloudEffective</code></td><td><code>/cloud_effected</code></td><td>真正参与匹配的点。它比原始点云稀很多</td></tr>
+        <tr><td><code>CloudMap</code></td><td><code>/Laser_map</code></td><td>累积地图。就是最后要存成 pcd 的那个</td></tr>
+        <tr><td><code>TF</code></td><td><code>/tf</code></td><td>坐标系变换。这里空的话上面全都显示不出来</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <p>
+    如果地图不出现，先别急着调参数，按这个顺序查：
+  </p>
+
+  <pre>ros2 topic hz /Laser_map
+ros2 topic hz /Odometry</pre>
+
+  <p>
+    <strong>有频率，问题在 RViz 的显示设置；没频率，问题在算法或数据。</strong>
+    这一条判断能把排查范围砍掉一半。
+  </p>
+
+  <h2 id="timeline">五、建图实录：274 秒、286 秒、301 秒</h2>
+
+  <p>
+    下面三段是同一次建图的不同时刻。我按 <code>ROS Elapsed</code> 排了序，
+    因为它比墙上时间更能说明「算法已经跑了多久」。
+  </p>
+
+  <h3>274.60 秒：第一次看见「结构」</h3>
+
+  <figure>
+    <video controls preload="metadata" playsinline poster="../assets/img/fastlio-rviz-oblique-poster.jpg">
+      <source src="../assets/video/fastlio-rviz-oblique.mp4" type="video/mp4">
+      你的浏览器不支持 video 标签，可以直接
+      <a href="../assets/video/fastlio-rviz-oblique.mp4">下载这段视频</a>。
+    </video>
+    <figcaption>
+      这是整条链上第一次跑出来的东西：不再是零散的点，而是一个有墙角、
+      有地面、有高度的<strong>立体结构</strong>。画面是斜视的，
+      因为这时候地图还只有一个方向，没铺开
+    </figcaption>
+  </figure>
+
+  <h3>286.14 秒：地图在长</h3>
+
+  <figure>
+    <video controls preload="metadata" playsinline poster="../assets/img/fastlio-rviz-mapping-poster.jpg">
+      <source src="../assets/video/fastlio-rviz-mapping.mp4" type="video/mp4">
+      你的浏览器不支持 video 标签，可以直接
+      <a href="../assets/video/fastlio-rviz-mapping.mp4">下载这段视频</a>。
+    </video>
+    <figcaption>
+      十二秒之后。能看出来的变化是<strong>视野边缘还在往外延伸</strong>——
+      这就是「在线建图」的实际观感：地图不是一次画出来的，是随着雷达移动一帧一帧贴上去的。
+      注意颜色：从紫到绿到黄是按高度上的色，不是按强度。
+      所以色带能直接看出「这里有个台子」「这里地面塌下去一块」
+    </figcaption>
+  </figure>
+
+  <h3>301.93 秒：走完一圈，回到起点</h3>
+
+  <figure>
+    <video controls preload="metadata" playsinline poster="../assets/img/fastlio-rviz-loopclosed-poster.jpg">
+      <source src="../assets/video/fastlio-rviz-loopclosed.mp4" type="video/mp4">
+      你的浏览器不支持 video 标签，可以直接
+      <a href="../assets/video/fastlio-rviz-loopclosed.mp4">下载这段视频</a>。
+    </video>
+    <figcaption>
+      从斜视变成俯视，地图闭成了一个<strong>完整的矩形</strong>。
+      这一下是整周最有成就感的一刻，也是最容易骗人的一刻——
+      看起来方方正正，但它到底准不准，光看图是判断不了的
+    </figcaption>
+  </figure>
+
+  <p>
+    三个时刻连起来看，正好是「在线建图」和「离线建图」的区别：
+  </p>
+
+  <ul>
+    <li>
+      <strong>在线的时候，你看到的是「已走过的部分」。</strong>
+      雷达没到过的地方是黑的，地图边缘永远是未完成的。
+    </li>
+    <li>
+      <strong>所以在线看形状，判断不了精度。</strong>
+      你只能判断「有没有出图」「有没有明显崩掉」。
+      真正的精度要等走完一圈、看闭合处对不对得上。
+    </li>
+    <li>
+      <strong>301 秒那张圆角矩形，是这三种状态的最后一种。</strong>
+      中间那些锯齿状的边缘、密度不均的地面，都是这一段路走得快慢不均留下的痕迹。
+    </li>
+  </ul>
+
+  <h2 id="loop">六、走完一圈，到底验证了什么</h2>
+
+  <p>
+    上一篇定的动作规范里有一条是「走闭合回路，回到起点」。
+    这一周终于知道它为什么是硬要求：
+  </p>
+
+  <p>
+    FAST-LIO 没有回环检测。它的位姿是<strong>一路积分推下来的</strong>，
+    每一帧的误差都会累积到下一帧。所以：
+  </p>
+
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr><th>你看到的现象</th><th>说明什么</th><th>接下来该改什么</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>回到起点，墙和墙对得上</td>
+          <td>这一圈的累积误差小，配置基本对</td>
+          <td>可以去存 pcd 了</td>
+        </tr>
+        <tr>
+          <td>回到起点，同一个墙角出现两条</td>
+          <td>累积漂移。<strong>这是正常的</strong>，只是量大小的问题</td>
+          <td>看漂移方向：绕 Z 转 = 陀螺零偏没估好；单向平移 = 尺度或外参有问题</td>
+        </tr>
+        <tr>
+          <td>走到一半地图就歪了、分层</td>
+          <td>不是漂移，是某一段直接崩了</td>
+          <td>回去看那一段的输入：是不是走太快、有没有经过玻璃、IMU 有没有掉帧</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <p>
+    中间那一行是这一周最重要的认知：<strong>累积漂移不是 bug，是这类算法的固有属性。</strong>
+    我一开始以为「准」的意思是「和实际尺寸一致」，后来才明白，
+    在没有回环检测、没有 GNSS、没有外部基准的情况下，
+    能做到的是<strong>「局部一致、整体缓慢漂移」</strong>。
+    要消掉它得另外加东西（回环检测、或者后期用别的办法闭合），
+    不是调参数能解决的。
+  </p>
+
+  <h2 id="stuck">七、这一周踩到的六个坑</h2>
+
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr><th>#</th><th>现象</th><th>当时的判断</th><th>实际原因</th><th>怎么确认</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>1</td>
+          <td>编译报找不到 <code>CustomMsg</code></td>
+          <td>仓库版本不对</td>
+          <td>编译前没 source <code>livox_ws</code></td>
+          <td>同一终端里 <code>echo $AMENT_PREFIX_PATH</code> 看有没有 livox 路径</td>
+        </tr>
+        <tr>
+          <td>2</td>
+          <td>克隆下来是空目录、编译缺文件</td>
+          <td>网络下载失败</td>
+          <td>没加 <code>--recursive</code>，子模块没拉</td>
+          <td><code>ls src/FAST_LIO_ROS2</code> 看有没有 ikd-Tree 目录</td>
+        </tr>
+        <tr>
+          <td>3</td>
+          <td>改了 yaml，行为没变</td>
+          <td>参数不生效</td>
+          <td>读的是 <code>install/</code> 里的旧副本</td>
+          <td>编译时加 <code>--symlink-install</code></td>
+        </tr>
+        <tr>
+          <td>4</td>
+          <td>RViz 全空，但话题有频率</td>
+          <td>算法没输出</td>
+          <td><code>Fixed Frame</code> 不是 <code>camera_init</code></td>
+          <td>展开 Global Options 看 <code>Global Status</code> 是不是 <code>[OK]</code></td>
+        </tr>
+        <tr>
+          <td>5</td>
+          <td>SSH 启动后报 <code>qt.qpa.xcb</code></td>
+          <td>程序崩了</td>
+          <td>只是 RViz 打不开，算法在跑</td>
+          <td><code>rviz:=false</code> 后 <code>topic hz /Odometry</code> 还在就没事</td>
+        </tr>
+        <tr>
+          <td>6</td>
+          <td>编译到链接阶段被 kill</td>
+          <td>代码有问题</td>
+          <td>内存不够，并行编译撑爆</td>
+          <td><code>--parallel-workers 2</code> 重来；<code>dmesg | grep -i oom</code></td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <p>
+    第 4 和第 5 条值得并在一起说：<strong>它们都是「看起来像算法坏了，其实跟算法无关」。</strong>
+    这一系列的坑基本都长这样——从第一周的网络，到这一周的图形环境，
+    真正难的地方从来不是写算法，是<strong>把「哪一层出问题」这件事先定下来</strong>。
+  </p>
+
+  <h2 id="next">八、下一步</h2>
+
+  <p>
+    地图在屏幕上，但它还在内存里。关掉终端就没了。
+    要真正拿来用——量尺寸、看质量、拿去和别人对齐——得把它存成文件。
+    那部分单独写了一篇，因为 CloudCompare 打开它那一刻，
+    出现了这一个月里第一个能拿来<strong>对账的数字</strong>。
+  </p>
+
+  <p>这一周明确没做的两件，和上一篇的理由一样：</p>
+
+  <ul>
+    <li><strong>没做时间同步校准。</strong><code>time_sync_en</code> 还关着，靠雷达内部时间戳。</li>
+    <li><strong>没标定外参。</strong><code>extrinsic_est_en</code> 是 true，让算法自己估。等装到机身上再动。</li>
+  </ul>
+
+  <div class="post-footer">
+    <a class="btn" href="intern-drone-week02-bag.html">← 上一篇：录包之前先量一次</a>
+    <a class="btn btn-primary" href="intern-drone-week04-pcd.html">看下一篇：把 pcd 拿出来 →</a>
+  </div>
+
+  </article>
+
+</main>
+
+<footer class="site-footer">
+  <div class="wrap-wide">
+    <span>qikai-lab · 第一次无人机的相关实习</span>
+    <span>最近更新：2026-11-10</span>
+  </div>
+</footer>
+
+</body>
+</html>
