@@ -68,9 +68,9 @@
 
         <aside class="profile-side">
           <p class="side-title">现在</p>
-          <div class="info-row"><span class="k">在做的项目</span><span class="v">1 个</span></div>
-          <div class="info-row"><span class="k">状态</span><span class="v">已定版 v1.0</span></div>
-          <div class="info-row"><span class="k">手记</span><span class="v">14 篇</span></div>
+          <div class="info-row"><span class="k">在做的项目</span><span class="v">2 个</span></div>
+          <div class="info-row"><span class="k">状态</span><span class="v">地面联调中</span></div>
+          <div class="info-row"><span class="k">手记</span><span class="v">19 篇</span></div>
 
           <p class="side-title">常用的</p>
           <div class="chip-row">
@@ -181,6 +181,33 @@
         </div>
       </a>
 
+      <a class="project-card" href="posts/leidianniao-01-architecture.html">
+        <div class="project-cover">
+          <img src="assets/img/drone-bottom.jpg" alt="雷电鸟 100 公斤级无人机，机臂下方挂载两台涵道风机用于吹扫光伏板积灰">
+        </div>
+        <div class="project-body">
+          <div class="post-card-top">
+            <span class="tag done">地面联调通过</span>
+            <span class="tag">PX4</span>
+            <span class="tag">MAVLink</span>
+            <span class="tag">RK3588</span>
+          </div>
+          <h3>雷电鸟：100 kg 级光伏清洗无人机</h3>
+          <p>
+            给新疆的光伏电站做清洁。缺水、不能水洗，改成挂两台涵道风机贴着板面吹。
+            飞控做唯一的 PWM 输出者，板子只发执行器指令；遥控器随时能夺权，松手即停。
+            含示波器实测的占空比证据链、三次被推翻的仲裁设计、一次上机的十三次误判。
+          </p>
+          <div class="project-meta">
+            <span>2026-11-11 → 2026-11-13</span>
+            <span>·</span>
+            <span>5 篇手记</span>
+            <span>·</span>
+            <span>未飞</span>
+          </div>
+        </div>
+      </a>
+
       <div class="project-card" style="cursor:default">
         <div class="project-cover is-empty">
           <span style="font-size:12.5px;color:var(--text-mute);text-align:center;line-height:1.7">
@@ -210,6 +237,51 @@
     </div>
 
     <div class="post-list">
+
+      <a class="post-card" href="posts/leidianniao-05-debug-log.html">
+        <div class="post-card-top">
+          <span class="post-date">2026-11-13</span>
+          <span class="tag done">已闭环</span>
+          <span class="tag">排障实录</span>
+          <span class="tag">误判</span>
+        </div>
+        <h3>它动了，但不是我要的动：一次上机的十三次误判</h3>
+        <p>
+          按会话层 / 协议层 / 语义层 / 生命周期层拆开，每层的症状和确认手段都不一样，
+          但在现场全都表现为「它不动」。其中两次是<strong>因为修错方向而变得更糟</strong>——
+          为了让键盘方向对，我加了一个把遥控器一起翻过去的开关。
+        </p>
+      </a>
+
+      <a class="post-card" href="posts/leidianniao-03-arbiter.html">
+        <div class="post-card-top">
+          <span class="post-date">2026-11-13</span>
+          <span class="tag done">语义已定</span>
+          <span class="tag">仲裁</span>
+          <span class="tag">超时保护</span>
+        </div>
+        <h3>谁说了算：被推翻三次的仲裁设计</h3>
+        <p>
+          「锁住当前速度」在弹簧杆上做不到可重复：快速弹一下锁到 1300，慢慢推过去锁到 1081，
+          因为锁的是<strong>采样那一拍的值</strong>。最后收敛成一句话：
+          松手即停、夺权即作废、超时防堵转、限速截在最后一步。
+        </p>
+      </a>
+
+      <a class="post-card" href="posts/leidianniao-01-architecture.html">
+        <div class="post-card-top">
+          <span class="post-date">2026-11-13</span>
+          <span class="tag done">架构定版</span>
+          <span class="tag">PX4</span>
+          <span class="tag">示波器</span>
+        </div>
+        <h3>100 公斤的吹风机：为什么把 PWM 交给飞控</h3>
+        <p>
+          三种控制结构对比之后，选了「飞控做唯一 PWM 输出者」——不是为了少写代码，
+          是因为它自带一整套失效语义。三张示波器截图把「%」和「us」钉在一起：
+          20ms × 6% = 1200us，周期从头到尾都是 20.00ms。
+        </p>
+      </a>
 
       <a class="post-card" href="posts/intern-drone-week04-pcd.html">
         <div class="post-card-top">

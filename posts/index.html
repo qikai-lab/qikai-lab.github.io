@@ -46,6 +46,70 @@
   <div class="wrap-wide">
 
     <div class="section-head">
+      <h2>雷电鸟：100 kg 级光伏清洗无人机</h2>
+      <span>5 篇 · 2026-11-13</span>
+    </div>
+
+    <p style="margin:-6px 0 0;font-size:14px;line-height:1.75;color:var(--text-soft);max-width:760px">
+      这一组不是按时间随手记的，是<strong>按依赖顺序写的</strong>：结构 → 协议 → 语义 → 设备化 → 排障。
+      第 5 篇是前四篇的反面——写的全是中间错过的路。
+    </p>
+
+    <div class="section-head" style="margin-top:26px">
+      <h3 style="font-size:15px;font-weight:650;margin:0;color:var(--text-soft)">执行器链路</h3>
+      <span>建议按顺序读</span>
+    </div>
+
+    <div class="log-list">
+
+      <a class="log-item" href="leidianniao-01-architecture.html">
+        <span class="log-when">01</span>
+        <span>
+          <span class="log-title">100 公斤的吹风机：为什么把 PWM 交给飞控</span>
+          <span class="log-desc">新疆光伏板缺水不能水洗，改成挂两台涵道风机贴着板面吹。三种控制结构对比，最后选「飞控做唯一 PWM 输出者」——换来一整套现成的失效语义。</span>
+        </span>
+        <span class="log-go">阅读 →</span>
+      </a>
+
+      <a class="log-item" href="leidianniao-02-mavlink-actuator.html">
+        <span class="log-when">02</span>
+        <span>
+          <span class="log-title">一条消息控两路：DO_SET_ACTUATOR 与那些不报错的坑</span>
+          <span class="log-desc">param1..param6 对应 Set1..Set6，<code>NaN</code> 表示这一路不动；<code>302</code> 和 <code>303</code> 差一个数字就是另一个执行器；废弃的订阅接口只会静默失效。</span>
+        </span>
+        <span class="log-go">阅读 →</span>
+      </a>
+
+      <a class="log-item" href="leidianniao-03-arbiter.html">
+        <span class="log-when">03</span>
+        <span>
+          <span class="log-title">谁说了算：被推翻三次的仲裁设计</span>
+          <span class="log-desc">「锁住当前速度」在弹簧杆上不可重复（快弹锁 1300、慢推锁 1081），最后收敛成一句话：松手即停、夺权即作废、超时防堵转、限速截在最后一步。</span>
+        </span>
+        <span class="log-go">阅读 →</span>
+      </a>
+
+      <a class="log-item" href="leidianniao-04-systemd.html">
+        <span class="log-when">04</span>
+        <span>
+          <span class="log-title">断电重启之后：把脚本变成设备的一部分</span>
+          <span class="log-desc"><code>systemctl stop</code> 发 SIGTERM 会跳过 <code>finally</code>，电机不归零；没有终端时用文件通道下指令；8 个「不报错但没生效」的坑汇总成表。</span>
+        </span>
+        <span class="log-go">阅读 →</span>
+      </a>
+
+      <a class="log-item" href="leidianniao-05-debug-log.html">
+        <span class="log-when">05</span>
+        <span>
+          <span class="log-title">它动了，但不是我要的动：一次上机的十三次误判</span>
+          <span class="log-desc">按会话层 / 协议层 / 语义层 / 生命周期层拆开；两次是「因为修错方向而变得更糟」；附日志时间轴读法和一张现象对照总表。</span>
+        </span>
+        <span class="log-go">阅读 →</span>
+      </a>
+
+    </div>
+
+    <div class="section-head" style="margin-top:44px">
       <h2>第一次无人机的相关实习</h2>
       <span>4 篇 · 2026-11-03 → 2026-11-10</span>
     </div>

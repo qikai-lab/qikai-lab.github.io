@@ -1,0 +1,510 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>断电重启之后：把一个 Python 脚本变成设备的一部分 · 雷电鸟实习手记</title>
+<meta name="author" content="qikai-lab">
+<link rel="canonical" href="https://qikai-lab.github.io/posts/leidianniao-04-systemd.html">
+<meta property="og:type" content="article">
+<meta property="og:site_name" content="雷电鸟实习手记">
+<meta property="og:url" content="https://qikai-lab.github.io/posts/leidianniao-04-systemd.html">
+<meta name="description" content="让脚本上电就自己跑：systemd 服务、参数文件、SIGTERM 为什么会让执行器停在最后方向、没有终端时怎么下指令，以及 8 个「不报错但没生效」的坑。">
+<link rel="stylesheet" href="../assets/css/style.css">
+</head>
+<body>
+
+<header class="site-header">
+  <nav class="nav">
+    <a class="brand" href="../index.html">
+      <span class="brand-mark">QL</span>
+      <span>qikai-lab</span>
+    </a>
+    <div class="nav-links">
+      <a href="../index.html">首页</a>
+      <a href="../projects/">项目</a>
+      <a href="../posts/" class="active">手记</a>
+      <a href="../index.html#about">关于</a>
+    </div>
+  </nav>
+</header>
+
+<main class="wrap">
+
+  <div class="post-header">
+    <div class="breadcrumb"><a href="../index.html">首页</a> / <a href="../posts/">手记</a> / 雷电鸟实习</div>
+    <h1>断电重启之后：把一个 Python 脚本变成设备的一部分</h1>
+    <div class="post-meta">
+      <span>2026-11-13</span>
+      <span class="dot">·</span>
+      <span class="tag done">已上电自启</span>
+      <span class="tag">systemd</span>
+      <span class="tag">SIGTERM</span>
+      <span class="tag">运维</span>
+      <span class="tag">踩坑清单</span>
+    </div>
+  </div>
+
+  <article class="prose">
+
+  <p>
+    功能齐了之后，还有一道坎：<strong>它现在只是一个"在终端里活着"的程序。</strong>
+    SSH 一断、终端一关、板子一重启，什么都没了。
+  </p>
+
+  <p>
+    这一篇是把它做成"设备的一部分"的全过程：开机自己起来、
+    没有终端也能下指令、被停止时不留下一个还在转的电机。
+    顺便把这一路上<strong>八个"不报错但没生效"的坑</strong>列在一张表里——
+    它们分布在不同层，但失败方式一模一样。
+  </p>
+
+  <h2 id="svc">一、四件东西组成一个服务</h2>
+
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr><th>文件</th><th>作用</th><th>装到哪</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><code>px4fan.service</code></td>
+          <td>服务单元：怎么启动、挂了要不要重启</td>
+          <td><code>/etc/systemd/system/</code></td>
+        </tr>
+        <tr>
+          <td><code>px4fan.default</code></td>
+          <td><strong>参数文件</strong>：开机时脚本收到的全部参数</td>
+          <td><code>/etc/default/px4fan</code></td>
+        </tr>
+        <tr>
+          <td><code>logrotate-px4fan</code></td>
+          <td>日志轮转，防止写到撑满磁盘</td>
+          <td><code>/etc/logrotate.d/</code></td>
+        </tr>
+        <tr>
+          <td><code>install_px4fan.sh</code></td>
+          <td>一键安装上面三样 + 启用 + 启动</td>
+          <td><code>~/px4fan/deploy/</code></td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <p>
+    把参数单独抽成一个文件，是我做完第一版之后补的。
+    一开始参数直接写在 <code>ExecStart=</code> 那一行里，
+    结果是：<strong>改一个数字要编辑 systemd 单元，改完还得 <code>daemon-reload</code></strong>。
+    抽出来之后变成 <code>EnvironmentFile=</code>，改参数就是改一行文本 + <code>restart</code>，
+    不用碰单元文件。
+  </p>
+
+  <pre>[Service]
+EnvironmentFile=/etc/default/px4fan
+ExecStart=/usr/bin/python3 /home/ztl/px4fan/px4_actuator_client.py arbiter $ARB_ARGS
+Restart=always
+RestartSec=3</pre>
+
+  <div class="callout info">
+    <div class="callout-icon">i</div>
+    <div class="callout-body">
+      <strong><code>Restart=always</code> 是一把双刃剑。</strong>
+      它让进程崩了自动拉起来，这在无人值守场景里是必须的；
+      但同时意味着<strong>"你怎么改都改不坏"这件事不存在</strong>——
+      参数写错了，它会每 3 秒崩溃重启一次，无限循环，而你只能从日志里看出来。
+      所以配 <code>RestartSec=3</code> 而不是 0：留出一点间隔，
+      让日志里能看清每一次失败，不至于刷屏到无法阅读。
+    </div>
+  </div>
+
+  <h2 id="term">二、<code>systemctl stop</code> 差点让风扇停不下来</h2>
+
+  <p>
+    这是这一整套里唯一一个<strong>会导致硬件继续动</strong>的 bug，值得单独一节。
+  </p>
+
+  <p>
+    脚本原本的收尾逻辑是 <code>try / finally</code>：主循环在 <code>try</code> 里，
+    退出时在 <code>finally</code> 里下发"停止"。
+    手动按 <code>Ctrl-C</code> 的时候，这没问题——<code>KeyboardInterrupt</code> 会走 <code>finally</code>。
+  </p>
+
+  <p>
+    但 <code>systemctl stop</code> 发的不是 <code>Ctrl-C</code>，是 <strong>SIGTERM</strong>。
+    而 <code>finally</code> <strong>不保证在收到信号时执行</strong>。
+    进程直接退出，<code>finally</code> 里那句"下发 1000us"根本没跑到。
+  </p>
+
+  <pre>[安全] 已下发 -1.0 = 1000us，风扇应停转；伸缩杆已回中位 1500us（停止）
+   ↑ Ctrl-C 时会打印这一行
+
+   ↑ systemctl stop 时：什么都没有，风扇继续按最后一个转速转</pre>
+
+  <p>
+    当时的现场：<code>systemctl stop px4fan</code> 之后，服务确实停了，
+    <code>is-active</code> 显示 <code>inactive</code>，但<strong>扇叶还在转</strong>。
+    因为飞控收到的最后一条指令是"1200us"，之后再也没有新的，
+    而 <code>PWM_AUX_FUNC=303</code> 的意思是"听外部指令"——
+    <strong>外部不说话了，它就保持最后一个值。</strong>
+  </p>
+
+  <p>
+    修法不是"捕获信号然后优雅退出"那么简单（信号处理函数里做 I/O 是不安全的），
+    而是<strong>让信号只改一个标志位，由主循环自己决定什么时候退</strong>：
+  </p>
+
+  <pre>_TERM = {"stop": False}
+
+def _on_term(signum, frame):
+    _TERM["stop"] = True          # 只置标志，不做任何 I/O
+
+signal.signal(signal.SIGTERM, _on_term)
+
+while True:
+    ...
+    if _TERM["stop"]:             # 由主循环判断，退出路径和 Ctrl-C 完全一致
+        break</pre>
+
+  <p>
+    这样两条退出路径合并成一条，<code>finally</code> 里的归零一定被执行到。
+    实测下来，<code>stop</code> 之后日志里就是那句熟悉的
+    <code>[安全] 已下发 -1.0 = 1000us</code>。
+  </p>
+
+  <div class="callout danger">
+    <div class="callout-icon">!</div>
+    <div class="callout-body">
+      <strong>这是一个"服务已经停了、设备还在动"的故障。</strong>
+      所有外部观察（<code>systemctl status</code>、进程列表、端口）都会告诉你"已停止"，
+      只有现场那个还在转的扇叶说明没有。
+      <strong>凡是靠"进程活着"来维持安全状态的系统，都要专门测一次"进程被杀死"。</strong>
+      这类测试不做，等于默认自己永远不会被 kill。
+    </div>
+  </div>
+
+  <h2 id="ctl">三、没有终端的时候，怎么下指令</h2>
+
+  <p>
+    服务跑起来之后，第一个撞上的问题是：<strong>怎么让杆动一下？</strong>
+  </p>
+
+  <p>
+    手动模式下是敲 <code>ru</code> 回车。但服务模式下有两个硬约束：
+  </p>
+
+  <ul>
+    <li>进程的 stdin 不是终端，敲什么都没人读；</li>
+    <li>14540 端口被这个进程独占了，<strong>再起一个实例去连飞控是不可能的</strong>。</li>
+  </ul>
+
+  <p>
+    这逼出了一个很土但非常好用的方案：<strong>用文件传话。</strong>
+  </p>
+
+  <pre># 写入一行
+echo "ru" &gt; ~/px4fan/ctl
+
+# 服务主循环每 50ms 看一次，读到就删掉
+[板子] 已下发：ru   ✓ 服务已接收</pre>
+
+  <p>
+    为什么是"读完即删"而不是"存着读"：<strong>保证一条指令只被执行一次。</strong>
+    如果文件留着，主循环每 50ms 就会重复执行一次，杆会被这条指令"钉住"。
+    删掉之后，语义就变成了一次性的"递条子"。
+  </p>
+
+  <p>
+    这个通道能用的命令和手动模式完全一样：
+  </p>
+
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr><th>内容</th><th>效果</th></tr>
+      </thead>
+      <tbody>
+        <tr><td><code>35</code></td><td>风扇 35%</td></tr>
+        <tr><td><code>+5</code> / <code>-5</code></td><td>在当前值上微调</td></tr>
+        <tr><td><code>s</code></td><td>停</td></tr>
+        <tr><td><code>u1250</code></td><td>风扇直接给 1250us</td></tr>
+        <tr><td><code>c1200</code> / <code>c0</code></td><td>改限速 / 取消限速</td></tr>
+        <tr><td><code>ru</code> / <code>rm</code> / <code>rd</code></td><td>杆 上 / 停 / 下</td></tr>
+        <tr><td><code>r1500</code></td><td>杆直接给脉宽</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <p>
+    然后给三个最常用的动作各包了一层命令，装到 <code>/usr/local/bin</code>，
+    这样在任何目录下都能直接敲：
+  </p>
+
+  <pre>rod up        杆向上
+rod down      杆向下
+rod stop      杆停
+rod 1600      杆给任意脉宽
+rod status    看服务状态 + 最近日志
+
+fan 35        风扇 35%
+fan stop      风扇停
+fan cap 1200  临时改限速
+fan status    看状态</pre>
+
+  <p>
+    这三个脚本做的事只有一件：<strong>往 <code>ctl</code> 写一行字，然后等 1 秒确认服务取走了。</strong>
+    它们不连飞控、不碰端口，所以<strong>可以和正在跑的服务共存</strong>。
+    这是设计上刻意的选择：<strong>控制通道和数据通道分开，互不影响。</strong>
+  </p>
+
+  <div class="callout success">
+    <div class="callout-icon">✓</div>
+    <div class="callout-body">
+      <strong>"读完即删 + 等 1 秒确认"解决了最烦的一类问题：指令到底有没有送到。</strong>
+      如果 1 秒内没被取走，脚本会打印 <code>⚠ 1 秒内没被取走</code>——
+      这句话基本等于"服务没在跑"。<strong>把"没反应"变成"明确的一条报错"，
+      现场排查成本差十倍。</strong>
+    </div>
+  </div>
+
+  <h2 id="pits">四、八个"不报错但没生效"的坑</h2>
+
+  <p>
+    这一路踩的坑不少，但真正耗时间的不是"报错的"，是那些<strong>看起来正常、实际没生效</strong>的。
+    它们的共同点是：<strong>所有能被检查的中间环节都显示成功。</strong>
+  </p>
+
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr><th>#</th><th>现象</th><th>以为的原因</th><th>实际原因</th><th>怎么一次确认</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>1</td>
+          <td>遥控器通道一帧都读不到</td>
+          <td>接收机没连上</td>
+          <td><code>REQUEST_DATA_STREAM</code> 在 PX4 1.16 已废弃，调用不报错、什么都不发</td>
+          <td>改用 <code>SET_MESSAGE_INTERVAL</code> 订阅，并每 3 秒重发</td>
+        </tr>
+        <tr>
+          <td>2</td>
+          <td>改了 <code>PWM_AUX_FUNC2</code>，杆还是只能遥控器控</td>
+          <td>参数没保存成功</td>
+          <td>参数写进 flash 了，但 PWM 只在启动时读一次</td>
+          <td><strong>重启飞控</strong>，再用 <code>probe</code> 看 AUX2 是不是 Set2</td>
+        </tr>
+        <tr>
+          <td>3</td>
+          <td><code>systemctl stop</code> 之后风扇还在转</td>
+          <td>服务没停</td>
+          <td>SIGTERM 让进程直接退出，<code>finally</code> 没执行</td>
+          <td>信号只置标志位，由主循环走正常退出路径</td>
+        </tr>
+        <tr>
+          <td>4</td>
+          <td>新脚本的功能一个都不生效，<code>unrecognized arguments</code></td>
+          <td>代码写错了</td>
+          <td>scp 没传上去，板子上还是旧文件</td>
+          <td><code>sha256sum</code> + 字节数，两个都对再测</td>
+        </tr>
+        <tr>
+          <td>5</td>
+          <td>scp 一直超时</td>
+          <td>板子网络有问题</td>
+          <td>IP 给成了 <code>10.41.10.1</code>（eth0 接飞控的口），不是 wlan0 的地址</td>
+          <td>SSH 用的哪个地址，scp 就用同一个</td>
+        </tr>
+        <tr>
+          <td>6</td>
+          <td>参数改了，服务重启后行为没变</td>
+          <td>代码有缓存</td>
+          <td>参数文件不是服务实际读的那一份</td>
+          <td>启动日志里把生效参数<strong>打印出来</strong>，对着看</td>
+        </tr>
+        <tr>
+          <td>7</td>
+          <td>键盘方向改对了，遥控器反而反了</td>
+          <td>遥控器需要重新校准</td>
+          <td>两个输入源原始方向本来就不同，用了一个全局镜像开关同时翻转</td>
+          <td>只改出错的那一侧；不要引入"全局开关"</td>
+        </tr>
+        <tr>
+          <td>8</td>
+          <td>示波器上看不到输出</td>
+          <td>飞控没输出</td>
+          <td>探针接地没接、或者量的是没被激活的空闲口</td>
+          <td>先量一个<strong>确定在动的</strong>口做对照</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <p>
+    八条里，属于"代码逻辑写错"的只有第 3 条和第 7 条。
+    其余六条全部集中在三个地方：<strong>文件有没有真的传过去、参数有没有真的被读、订阅有没有真的生效。</strong>
+  </p>
+
+  <p>
+    这三件事有一个共同点——<strong>它们都不报错。</strong>
+    第 4 条最典型：命令输出了 <code>100%</code>，终端没有任何异常，
+    但文件根本没落到目标目录。这种情况只能靠<strong>传完之后核对哈希</strong>，
+    不能靠"看起来成功了"。
+  </p>
+
+  <div class="callout warn">
+    <div class="callout-icon">!</div>
+    <div class="callout-body">
+      <strong>凡是"我改了但它没变"，一律先证明"改的东西真的到位了"。</strong>
+      顺序是：文件在不在（哈希）→ 参数读没读（启动日志）→ 生效没生效（<code>probe</code> / 示波器）。
+      <strong>跳过前两步直接改代码，是最常见的浪费。</strong>
+    </div>
+  </div>
+
+  <h2 id="accept">五、验收：拔电，等一分钟，什么都不敲</h2>
+
+  <p>
+    "开机自启"这件事只有一种验收方式：<strong>断电重启，然后不敲任何命令。</strong>
+  </p>
+
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr><th>步骤</th><th>做什么</th><th>应该看到</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>1</td>
+          <td><code>sudo reboot</code>，等一分钟</td>
+          <td>SSH 能重新连上</td>
+        </tr>
+        <tr>
+          <td>2</td>
+          <td><code>systemctl is-active px4fan</code></td>
+          <td><code>active</code>（不需要手动 start）</td>
+        </tr>
+        <tr>
+          <td>3</td>
+          <td><code>tail -n 40 ~/px4fan/logs/arbiter.log</code></td>
+          <td>出现 <code>已连上 sysid=1</code>、<code>AUX2 绑 Offboard Actuator Set 2</code>、
+              <code>AUX3 绑 Offboard Actuator Set 3</code></td>
+        </tr>
+        <tr>
+          <td>4</td>
+          <td>看现场</td>
+          <td><strong>风扇不转、杆停在中位</strong>（两个都是安全初始值）</td>
+        </tr>
+        <tr>
+          <td>5</td>
+          <td><code>rod up</code></td>
+          <td><code>✓ 服务已接收</code>，杆向上</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <p>
+    第 4 步是很多人会忽略的一条：<strong>开机自启的目标不是"程序跑起来了"，
+    而是"跑起来之后设备处于安全状态"。</strong>
+    如果上电瞬间杆就往一个方向走，那这个服务还不如不装。
+  </p>
+
+  <figure>
+    <img src="../assets/img/drone-side.jpg" alt="侧面视角：可见碳纤维机臂、大电机、机身内部电池与线束、右侧伸出的两根细杆末端装有两个红色涵道风机">
+    <figcaption>
+      侧面。右侧那两根向外的细杆末端就是风机总成，中间那根竖直件负责升降。
+      <strong>整机现在还挂在吊绳上，所有验证都是地面状态</strong>——
+      真正飞起来之后，振动、气流、供电波动都会是另一个量级的问题
+    </figcaption>
+  </figure>
+
+  <h2 id="hardware">六、软件兜不住的那一小块</h2>
+
+  <p>
+    这套东西做到了"程序活着的时候一切都受控"。但它兜不住一种情况：
+  </p>
+
+  <p>
+    <strong>板子彻底死机。</strong>不是进程崩（那会被 <code>Restart=always</code> 拉起来），
+    是整个系统卡死——这时候没有任何软件在跑，
+    飞控收到的最后一条指令永远停在那里，杆会一直顶在限位上，
+    风扇会一直按最后的转速转，直到有人去拔电。
+  </p>
+
+  <p>
+    所以硬件兜底是必须的，具体两件：
+  </p>
+
+  <ul>
+    <li>
+      <strong>两端各一只常闭型微动限位开关</strong>，机械到位就断开；
+    </li>
+    <li>
+      <strong>一个继电器模块，串在杆电机的电源正极上</strong>，
+      由限位开关控制。<strong>断开电源是真断电，不依赖任何软件。</strong>
+    </li>
+  </ul>
+
+  <p>
+    注意这里是<strong>常闭</strong>而不是常开：常闭的意思是"没触发就通路"，
+    线路断了、开关坏了，表现是"杆不动"，而不是"杆失控"。
+    <strong>失效方向要指向安全的一侧，这是硬件兜底的全部意义。</strong>
+  </p>
+
+  <h2 id="wrapup">七、四篇连起来</h2>
+
+  <ol>
+    <li><strong>定结构</strong>——飞控做唯一 PWM 输出者，换来一整套现成的失效语义。</li>
+    <li><strong>说清协议</strong>——归一化、<code>NaN</code>、量化、订阅式接口。</li>
+    <li><strong>定语义</strong>——松手即停、夺权即作废、超时防堵转、限速截在最后一步。</li>
+    <li><strong>变成设备</strong>——服务、参数文件、文件通道、快捷命令、断电重启验收。</li>
+  </ol>
+
+  <p>
+    回头看这半个月，真正难的不是哪一段代码。
+    <strong>难的是每一次"它到底在按谁的规则动"这个问题，都得有一个能一句话说完的答案。</strong>
+    三个被推翻的设计、八个不报错的坑，本质上都在回答同一件事。
+  </p>
+
+  <p>
+    如果这个系列只留一句话，我留这句：
+    <strong>让会动的东西，在任何一种失败情况下都只有一个可预期的行为。</strong>
+    做不到这一条，功能再多也不敢让它靠近光伏板。
+  </p>
+
+  <h2 id="todo">八、还没做的</h2>
+
+  <ul>
+    <li>
+      <strong>没飞过。</strong> 所有验证都是吊装地面状态。振动、气流、供电波动完全是另一套输入。
+    </li>
+    <li>
+      <strong>杆的行程没量准。</strong> <code>--rod-timeout</code> 现在按 12 秒给，
+      真实全行程秒数还没掐表测过——这个数是唯一的依据。
+    </li>
+    <li>
+      <strong>硬件兜底没装。</strong> 限位开关和继电器还是纸上的方案。
+    </li>
+    <li>
+      <strong>没有和飞行状态联动。</strong> 现在的逻辑不知道飞机是在飞还是在地上，
+      真正作业时"离板面多近才允许开风机"这类判断还没进去。
+    </li>
+  </ul>
+
+  <div class="post-footer">
+    <a class="btn" href="leidianniao-03-arbiter.html">← 上一篇：谁说了算</a>
+    <a class="btn btn-primary" href="leidianniao-01-architecture.html">回到第一篇 →</a>
+  </div>
+
+  </article>
+
+</main>
+
+<footer class="site-footer">
+  <div class="wrap-wide">
+    <span>qikai-lab · 雷电鸟实习手记</span>
+    <span>最近更新：2026-11-13</span>
+  </div>
+</footer>
+
+</body>
+</html>

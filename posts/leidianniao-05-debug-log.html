@@ -1,0 +1,669 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>它动了，但不是我要的动：一次上机的十三次误判 · 雷电鸟实习手记</title>
+<meta name="author" content="qikai-lab">
+<link rel="canonical" href="https://qikai-lab.github.io/posts/leidianniao-05-debug-log.html">
+<meta property="og:type" content="article">
+<meta property="og:site_name" content="雷电鸟实习手记">
+<meta property="og:url" content="https://qikai-lab.github.io/posts/leidianniao-05-debug-log.html">
+<meta name="description" content="从「遥控器推不动」到「松手后自己又走」：把一次真实上机调试里的十三次误判按会话层、协议层、语义层、生命周期层拆开，附故障分层图、日志时间轴读法和一张现象对照总表。">
+<link rel="stylesheet" href="../assets/css/style.css">
+</head>
+<body>
+
+<header class="site-header">
+  <nav class="nav">
+    <a class="brand" href="../index.html">
+      <span class="brand-mark">QL</span>
+      <span>qikai-lab</span>
+    </a>
+    <div class="nav-links">
+      <a href="../index.html">首页</a>
+      <a href="../projects/">项目</a>
+      <a href="../posts/" class="active">手记</a>
+      <a href="../index.html#about">关于</a>
+    </div>
+  </nav>
+</header>
+
+<main class="wrap">
+
+  <div class="post-header">
+    <div class="breadcrumb"><a href="../index.html">首页</a> / <a href="../posts/">手记</a> / 雷电鸟实习</div>
+    <h1>它动了，但不是我要的动</h1>
+    <div class="post-meta">
+      <span>2026-11-13</span>
+      <span class="dot">·</span>
+      <span class="tag done">已闭环</span>
+      <span class="tag">排障实录</span>
+      <span class="tag">日志</span>
+      <span class="tag">误判</span>
+      <span class="tag">方法论</span>
+    </div>
+  </div>
+
+  <article class="prose">
+
+  <p>
+    前四篇写的都是"最后是怎么做的"。这一篇写<strong>中间是怎么错过来的</strong>。
+  </p>
+
+  <p>
+    为什么不写"顺利的版本"：因为顺利的版本不包含任何可复用的判断。
+    真正让人卡住一整天甚至一整晚的，从来不是"这段代码怎么写"，
+    而是<strong>"现象摆在眼前，我不知道该怀疑哪一层"</strong>。
+    这次上机一共出现了<strong>十三次误判</strong>，
+    其中七次是我把原因猜错了，两次是我<strong>修错了方向</strong>（修完之后更糟）。
+  </p>
+
+  <p>
+    下面按<strong>故障出在哪一层</strong>分组，而不是按时间顺序——
+    时间顺序是给当事人看的，分层才给后来的人用。
+  </p>
+
+  <h2 id="layer">零、先给一张分层图</h2>
+
+  <p>
+    这套链路上有四个可以出问题的层次。它们的<strong>症状特征完全不同</strong>，
+    但都表现为"它不动"。如果没有这张图，人会很自然地在最熟悉的那一层反复找。
+  </p>
+
+  <div class="diagram-box">
+    <svg viewBox="0 0 680 392" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="故障分层图：会话层、协议层、语义层、生命周期层四层，每层对应典型现象与确认手段，越往下发现越晚、代价越高">
+      <defs>
+        <marker id="dn" markerWidth="8" markerHeight="8" refX="4" refY="7" orient="auto">
+          <path d="M0,0 L8,0 L4,7 z" fill="#94a3b8"/>
+        </marker>
+      </defs>
+
+      <text x="0" y="12" font-size="10.5" fill="#94a3b8" font-family="system-ui">现象</text>
+      <text x="372" y="12" font-size="10.5" fill="#94a3b8" font-family="system-ui">确认手段（唯一可信的判据）</text>
+
+      <!-- 会话层 -->
+      <rect x="0" y="22" width="352" height="62" rx="9" fill="#eff6ff" stroke="#bfdbfe"/>
+      <rect x="0" y="22" width="5" height="62" rx="2.5" fill="#2563eb"/>
+      <text x="16" y="43" font-size="12" font-weight="700" fill="#1e3a8a" font-family="system-ui">第一层 · 会话</text>
+      <text x="16" y="61" font-size="11" fill="#334155" font-family="system-ui">一条数据都没有；命令敲了没反应</text>
+      <text x="16" y="77" font-size="11" fill="#64748b" font-family="system-ui">传错 IP / 端口被占 / 文件根本没传上去</text>
+
+      <!-- 协议层 -->
+      <rect x="0" y="96" width="352" height="62" rx="9" fill="#eef2ff" stroke="#c7d2fe"/>
+      <rect x="0" y="96" width="5" height="62" rx="2.5" fill="#4f46e5"/>
+      <text x="16" y="117" font-size="12" font-weight="700" fill="#312e81" font-family="system-ui">第二层 · 协议</text>
+      <text x="16" y="135" font-size="11" fill="#334155" font-family="system-ui">连上了，但字段是空的 / 通道不对</text>
+      <text x="16" y="151" font-size="11" fill="#64748b" font-family="system-ui">用了废弃接口；功能号选错；参数未重启</text>
+
+      <!-- 语义层 -->
+      <rect x="0" y="170" width="352" height="62" rx="9" fill="#fffbeb" stroke="#fde68a"/>
+      <rect x="0" y="170" width="5" height="62" rx="2.5" fill="#d97706"/>
+      <text x="16" y="191" font-size="12" font-weight="700" fill="#78350f" font-family="system-ui">第三层 · 语义</text>
+      <text x="16" y="209" font-size="11" fill="#334155" font-family="system-ui">动了，但方向反 / 松手后自己又走</text>
+      <text x="16" y="225" font-size="11" fill="#64748b" font-family="system-ui">谁说了算没定清；接管没作废旧指令</text>
+
+      <!-- 生命周期层 -->
+      <rect x="0" y="244" width="352" height="62" rx="9" fill="#fef2f2" stroke="#fecaca"/>
+      <rect x="0" y="244" width="5" height="62" rx="2.5" fill="#dc2626"/>
+      <text x="16" y="265" font-size="12" font-weight="700" fill="#7f1d1d" font-family="system-ui">第四层 · 生命周期</text>
+      <text x="16" y="283" font-size="11" fill="#334155" font-family="system-ui">该停的时候没停，或者停得太晚</text>
+      <text x="16" y="299" font-size="11" fill="#64748b" font-family="system-ui">信号被杀跳过清理；堵转无保护</text>
+
+      <!-- 右侧确认手段 -->
+      <rect x="372" y="22" width="308" height="62" rx="9" fill="#fff" stroke="#e2e8f0"/>
+      <text x="388" y="43" font-size="11" fill="#0f172a" font-family="ui-monospace,monospace">ping · systemctl is-active</text>
+      <text x="388" y="60" font-size="11" fill="#0f172a" font-family="ui-monospace,monospace">sha256sum（哈希，不是文件名）</text>
+      <text x="388" y="77" font-size="10.5" fill="#94a3b8" font-family="system-ui">▶ 看"有没有到"，不看逻辑</text>
+
+      <rect x="372" y="96" width="308" height="62" rx="9" fill="#fff" stroke="#e2e8f0"/>
+      <text x="388" y="117" font-size="11" fill="#0f172a" font-family="ui-monospace,monospace">probe（读飞控内部真实分配）</text>
+      <text x="388" y="134" font-size="11" fill="#0f172a" font-family="ui-monospace,monospace">watch-rc（看原始值，不看结果）</text>
+      <text x="388" y="151" font-size="10.5" fill="#94a3b8" font-family="system-ui">▶ 看"对方怎么理解"，不看界面</text>
+
+      <rect x="372" y="170" width="308" height="62" rx="9" fill="#fff" stroke="#e2e8f0"/>
+      <text x="388" y="191" font-size="11" fill="#0f172a" font-family="ui-monospace,monospace">单步动作 + 打印「实际下发值」</text>
+      <text x="388" y="208" font-size="11" fill="#0f172a" font-family="ui-monospace,monospace">每一步只改一个变量</text>
+      <text x="388" y="225" font-size="10.5" fill="#94a3b8" font-family="system-ui">▶ 看"我发的是什么"，不看结果</text>
+
+      <rect x="372" y="244" width="308" height="62" rx="9" fill="#fff" stroke="#e2e8f0"/>
+      <text x="388" y="265" font-size="11" fill="#0f172a" font-family="ui-monospace,monospace">Ctrl-C / systemctl stop / 拔网线</text>
+      <text x="388" y="282" font-size="11" fill="#0f172a" font-family="ui-monospace,monospace">三种退出各做一次，看输出</text>
+      <text x="388" y="299" font-size="10.5" fill="#94a3b8" font-family="system-ui">▶ 看"停下来时什么样"，不看跑动</text>
+
+      <!-- 深度箭头 -->
+      <line x1="176" y1="322" x2="176" y2="352" stroke="#94a3b8" stroke-width="1.4" marker-end="url(#dn)"/>
+      <text x="188" y="340" font-size="10.5" fill="#64748b" font-family="system-ui">越往下，发现得越晚，代价越大</text>
+
+      <text x="0" y="376" font-size="10.5" fill="#94a3b8" font-family="system-ui">前两层的失败会报错或留空；后两层不报错，只是行为不对——这类才是真正烧时间的</text>
+    </svg>
+  </div>
+
+  <p>
+    这张图是事后才画出来的。当时没有它，所以我做的第一件事就是
+    <strong>在第四层（生命周期）的问题上，反复重装第一层（会话）的东西</strong>——
+    重新 scp、重启服务、换端口，做了十几遍，问题一次都没变。
+  </p>
+
+  <h2 id="silent">一、第一组：话没通</h2>
+
+  <h3>误判 1 · 遥控器推不动风机，我以为是遥控器没连上</h3>
+
+  <p>
+    最早的验证脚本里有个 <code>watch-rc</code>，专门盯遥控器通道。
+    拨杆的时候它<strong>只打出一行</strong>：
+  </p>
+
+  <pre>[状态] mode=LOITER
+[状态] mode=LOITER
+[状态] mode=LOITER</pre>
+
+  <p>
+    一个通道值都没有。第一反应是"遥控器没连"或"接收机没对频"。
+    但这个判断很容易被推翻：<strong>飞控状态能读到 <code>LOITER</code>，说明链路是通的</strong>——
+    连不上飞控，<code>mode</code> 也读不出来。
+  </p>
+
+  <p>
+    真正的原因是：脚本用的是 <code>REQUEST_DATA_STREAM</code> 这个
+    <strong>已经被 PX4 1.16 废弃掉的旧订阅接口</strong>。
+    消息发出去不报错，飞控只是<strong>不理会</strong>。
+    于是脚本"订阅成功"了，却永远收不到 <code>RC_CHANNELS</code>。
+  </p>
+
+  <div class="callout warn">
+    <div class="callout-icon">!</div>
+    <div class="callout-body">
+      <strong>废弃接口的失败方式是"静默"。</strong>
+      它不返回错误、不抛异常，只是从此没有数据。
+      所以只要看到"连接成功但内容永远为空"，第一个要怀疑的就是<strong>协议版本</strong>，
+      而不是物理链路。改成
+      <code>MAV_CMD_SET_MESSAGE_INTERVAL</code>，并每隔几秒重发一次（防止被飞控重置），
+      通道值立刻就有了。
+    </div>
+  </div>
+
+  <h3>误判 2 · 文件传不过去，我以为是网络断了</h3>
+
+  <p>
+    <code>scp</code> 一直超时。查了半天无线信号、防火墙、SSH 配置，
+    最后发现是<strong>我自己给错了 IP</strong>。
+  </p>
+
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr><th>地址</th><th>实际用途</th><th>能不能 scp</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><code>10.41.10.1</code></td>
+          <td>eth0，直连飞控的那条网口的地址</td>
+          <td><strong>不能</strong>——那是给 MAVLink 用的，不是给人登录的</td>
+        </tr>
+        <tr>
+          <td><code>192.168.110.180</code></td>
+          <td>wlan0，板子接路由器的地址</td>
+          <td><strong>能</strong>——日常 SSH / scp 全走这个</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <p>
+    这两个地址很容易混，因为<strong>两个都能 ping 通、两个都"看起来像板子"</strong>。
+    判据只有一个：<strong>能不能 SSH 上去</strong>。
+    能登进去的那个，才是给人用的。
+  </p>
+
+  <h3>误判 3 · 传了四次才对——因为我一直在核对文件名</h3>
+
+  <p>
+    这一条最典型。改完代码传上去，跑起来报
+    <code>unrecognized arguments: --rod-invert</code>。
+    第一反应是"参数写错了""代码没编过"。
+  </p>
+
+  <p>
+    实际情况：<strong>板子上跑的是旧文件</strong>。而我确认的方式是看
+    <code>ls -l</code> 的文件名——文件名当然一样，因为它就一直叫那个名字。
+  </p>
+
+  <p>
+    真正致命的细节在路径上：在 Git Bash 里用
+    <code>"D:\雷电鸟实习\...\代码\px4_actuator_client.py"</code> 这种反斜杠中文路径，
+    <code>\</code> 被当作转义符吃掉了，路径解析失败，<code>scp</code> 传的是<strong>别的东西或者干脆没传</strong>，
+    但终端只给一行超时，看起来像是网络问题。
+  </p>
+
+  <div class="callout info">
+    <div class="callout-icon">i</div>
+    <div class="callout-body">
+      <strong>换来的一条硬规则：落地文件必须用哈希确认，不能用文件名、不能用时间戳、不能用大小截图。</strong>
+      这次四个版本的哈希是这样对上的——
+      <code>f063f662</code> / 61198 字节（无方向修正）→
+      <code>9aca49b7</code> / 62458（第一次修方向，修错）→
+      <code>d915aa1c</code> / 61624（删掉开关，只改键盘）→
+      <code>4e5d7144</code> / 62730（接管即作废）。
+      板子上一敲 <code>sha256sum</code>，前 8 位一对比，"到底是不是新版"这个问题就不再需要猜。
+    </div>
+  </div>
+
+  <h3>误判 4 · 加了个 <code>1</code>，整条命令根本没执行</h3>
+
+  <p>
+    复制命令时前面多带了一个字符，变成 <code>1sudo systemctl stop px4fan</code>。
+    bash 报 <code>1sudo: 未找到命令</code>，然后<strong>继续执行下一行</strong>——
+    于是停下来看：服务没停、端口还占着、脚本连不上飞控，
+    而屏幕上全是"参数不认识""连不上"之类的错误。
+  </p>
+
+  <p>
+    看起来像一个复杂的复合故障，实际是<strong>第一行根本没跑</strong>。
+    这类问题的判据很简单：<strong>报错之前那条命令，有没有回显成功</strong>。
+    <code>systemctl stop</code> 成功是<strong>静默</strong>的，
+    所以更稳的写法是先 <code>systemctl is-active</code> 看一眼，再从 <code>active</code> 变 <code>inactive</code>。
+  </p>
+
+  <h3>误判 5 · 参数改了，但"没生效"</h3>
+
+  <p>
+    把伸缩杆那个 AUX 口从"遥控器直通"改成"板子控制"，QGC 里点了保存、数值也变了，
+    结果<strong>什么都没变</strong>——遥控器还能直接驱动杆子。
+  </p>
+
+  <p>
+    原因：<code>PWM_AUX_FUNC*</code> 这类参数<strong>只在飞控启动初始化 PWM 输出时读一次</strong>。
+    热改参数不会重新绑定输出通道，必须<strong>重启飞控</strong>。
+    而且重启后要再查一次，确认它真的写进了 flash，没有变回原值。
+  </p>
+
+  <h3>误判 6 · 下拉菜单里差一个选项，就是完全不同的东西</h3>
+
+  <p>
+    同一个下拉框里有两个长得很像的选项：一个是给"电机 8"，一个是给"执行器通道 2"。
+    选错了，界面上都显示"已配置"，但板子发下去的指令<strong>落在一个没人听的通道上</strong>。
+  </p>
+
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr><th>选项</th><th>数值</th><th>含义</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>Peripheral via Actuator Set 2</td><td><strong>302</strong></td><td>✅ 板子的第 2 路执行器指令</td></tr>
+        <tr><td>Peripheral via Actuator Set 3</td><td>303</td><td>那是风机那一路，杆子接上去会跟着风机转</td></tr>
+        <tr><td>RC AUX 2</td><td>409</td><td>遥控器直通（改之前的原值）</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <p>
+    正确的确认方式不是看界面，而是跑 <code>probe</code>
+    读<strong>飞控自己认为</strong>这个口在干什么：
+    必须出现 <code>Offboard Actuator Set 2</code> 和
+    <code>已配 Offboard Actuator: AUX2=Set2, AUX3=Set3</code> 这一行。
+  </p>
+
+  <h2 id="wrong">二、第二组：动了，但不对</h2>
+
+  <p>
+    这一组是全部十三次里<strong>最贵的</strong>。因为第一组的故障"不动"，
+    而这一组的故障"动了"——<strong>动了就会让人以为成功了</strong>。
+  </p>
+
+  <h3>误判 7 · 方向反了，而我第一次只改了一半</h3>
+
+  <p>
+    键盘敲"向上"，杆子往<strong>下</strong>走。当时的判断是"代码里映射写反了"，
+    于是去改键盘那一支。
+  </p>
+
+  <p>
+    但我漏了一个问题：<strong>这个"向上/向下"是谁定义的？</strong>
+    键盘和遥控器是<strong>两个独立的输入源</strong>，
+    它们各自到脉宽的映射本来就是分开的两段代码。
+    我只验证了键盘是反的，就默认"两边都反"。
+  </p>
+
+  <h3>误判 8 · 为了修方向，我加了一个把两边一起翻的开关</h3>
+
+  <p>
+    这是这一整晚最糟的一次。我加了一个 <code>--rod-invert</code>，
+    以中位为轴做镜像：<code>1000↔2000</code>、<code>1500</code> 不动，
+    并且<strong>键盘和遥控器同时过这个镜像</strong>。
+  </p>
+
+  <p>
+    结果：键盘对了，<strong>遥控器反了</strong>。
+    因为遥控器本来就是对的——它往上拨给低档、杆子向上，方向一直是对的。
+    我用"一把剪刀"剪了两边，把原本正确的那一边剪坏了。
+  </p>
+
+  <div class="callout danger">
+    <div class="callout-icon">×</div>
+    <div class="callout-body">
+      <strong>根因不是"方向反了"，是"我没有先测出两个输入源各自的原始方向"。</strong>
+      正确顺序应该是：<strong>先单独记录每个输入源在没有任何修正时的行为</strong>，
+      写进一张表，再决定改哪一段。
+      我跳过了这一步，直接开始改，于是把"一个明确的 bug"变成了"两个互相矛盾的 bug"——后者更难查，
+      因为<strong>两个方向相反的错会互相掩护</strong>。
+    </div>
+  </div>
+
+  <p>
+    最终的修法很短：<strong>删掉 <code>--rod-invert</code> 整个开关，只改键盘那一支的两个常量</strong>，
+    遥控器一个字不碰。删掉之后两边的行为第一次一致。
+  </p>
+
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr><th>输入源</th><th>操作</th><th>下发脉宽</th><th>杆子动作</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>键盘</td><td><code>ru</code></td><td>1000</td><td>向上</td></tr>
+        <tr><td>键盘</td><td><code>rm</code></td><td>1500</td><td>停</td></tr>
+        <tr><td>键盘</td><td><code>rd</code></td><td>2000</td><td>向下</td></tr>
+        <tr><td>遥控器</td><td>往上拨（低档 1050）</td><td>1000</td><td>向上</td></tr>
+        <tr><td>遥控器</td><td>居中（1500）</td><td>1500</td><td>停</td></tr>
+        <tr><td>遥控器</td><td>往下拨（高档 1950）</td><td>2000</td><td>向下</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <p>
+    方向定死之后，杆子和风机的分工才稳定下来：<strong>板子发指令、遥控器随时能夺权</strong>。
+    这台机器上两个执行器挂在同一个飞控、跑在同一份脚本里：
+  </p>
+
+  <figure>
+    <img src="../assets/img/drone-front.jpg" alt="雷电鸟 100 公斤级无人机正面，机臂下方挂载涵道风机组件与可上下伸缩的连接杆" loading="lazy">
+    <figcaption>
+      正面视角：下方那两根水平伸出的杆子末端挂的就是涵道风机，
+      整组可以上下伸缩。风机和伸缩杆现在由<strong>同一份脚本、同一条 MAVLink 连接</strong>驱动，
+      所以任何一次改动都要同时验证两路互不干扰。
+    </figcaption>
+  </figure>
+
+  <h3>误判 9 · 遥控器松手之后，杆子自己又走回去了</h3>
+
+  <p>
+    这个现象第一次出现时，我以为是"遥控器回中没被识别"。日志否掉了这个猜测：
+  </p>
+
+  <pre>[仲裁] CH6=1050us -> 伸缩杆 1000us [低档]      ← 遥控器夺权，杆子向上
+[仲裁] CH6=1500us -> 伸缩杆 1500us [中位]      ← 回中，停住了
+[仲裁] CH6=1500us -> 伸缩杆 2000us [中位]      ← 下一拍：怎么又往下了？</pre>
+
+  <p>
+    遥控器这边完全正常，<strong>问题在板子那边</strong>：
+    板子之前敲过一条 <code>rd</code>（向下），这条指令在遥控器介入时<strong>只是被暂时压住，没有被作废</strong>。
+    遥控器一回中，压住它的力消失了，旧指令<strong>原地复活</strong>。
+  </p>
+
+  <div class="callout success">
+    <div class="callout-icon">✓</div>
+    <div class="callout-body">
+      <strong>"接管"和"作废"是两件事。</strong>
+      接管是"这一拍听我的"，作废是"你那条指令从此不存在"。
+      只做前者，就会得到一个<strong>在松手之后才开始执行旧动作</strong>的机器。
+      在会动的设备上，这是最坏的一类行为——它发生在你以为事情已经结束的时候。
+    </div>
+  </div>
+
+  <p>
+    改法只有一行：遥控器<strong>一旦离开中位</strong>，就把板子当时的方向指令清零，
+    让它和"停"变成同一个值。这样回中读到的是"停"，而不是那条旧指令。
+  </p>
+
+  <h3>误判 10 · "锁住当前速度"这个功能，在弹簧杆上根本不可能重复</h3>
+
+  <p>
+    这个设计被推翻过三次，最后彻底删掉了。技术上最有力的证据是这一条：
+  </p>
+
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr><th>操作</th><th>摇杆推到</th><th>锁存到的值</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>快速弹一下</td><td>约 1300</td><td><strong>1300</strong></td></tr>
+        <tr><td>慢慢推过去</td><td>约 1081</td><td><strong>1081</strong></td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <p>
+    锁存用的是"松手那一拍采样到的值"，而采样时刻取决于手速。
+    所以<strong>同一个意图得不到同一个结果</strong>。
+  </p>
+
+  <p>
+    一个设备如果做不到"同样的动作产生同样的结果"，它就没法被信任——
+    尤其在它下面挂着 100 公斤的东西、旁边是光伏板的时候。
+    最后收敛成一条规则：<strong>遥控器一回中，就停；板子要转，重新下指令。</strong>
+    一句话说完，没有内部状态需要理解。
+  </p>
+
+  <h2 id="neverstop">三、第三组：该停的时候没停</h2>
+
+  <h3>误判 11 · 服务停了，电机还在转</h3>
+
+  <p>
+    做成开机自启之后发现：<code>systemctl stop px4fan</code>，
+    进程没了、服务显示 <code>inactive</code>，<strong>风机还在转</strong>。
+  </p>
+
+  <p>
+    原因是 <code>systemd stop</code> 发的是 <code>SIGTERM</code>，
+    而脚本的"归零"写在 <code>finally</code> 里。
+    Python 收到 <code>SIGTERM</code> 时<strong>默认直接终止</strong>，不走 <code>finally</code>——
+    于是最后一条 PWM 指令永远发不出去，飞控保持最后一个值。
+  </p>
+
+  <div class="callout warn">
+    <div class="callout-icon">!</div>
+    <div class="callout-body">
+      <strong>"优雅退出"不能依赖 <code>finally</code>。</strong>
+      正确做法是让信号处理函数<strong>只置一个标志位</strong>，
+      由主循环自己发现标志、正常走完收尾、再退出。
+      改完后的日志末尾会多出一行，这是唯一能证明它真的停了的证据：
+      <code>[安全] 已下发 -1.0 = 1000us，风扇应停转；伸缩杆已回中位 1500us（停止）</code>
+    </div>
+  </div>
+
+  <h3>误判 12 · 服务一跑起来，键盘就没有了</h3>
+
+  <p>
+    服务模式下 stdin 不是终端，交互指令全部失效；
+    而手动再起一个进程又会撞上<strong>端口已被占用</strong>
+    （同一时刻只能有一个进程绑在那个 UDP 端口上）。
+  </p>
+
+  <p>
+    最后的办法是绕开端口：<strong>不连飞控，只写一个文件</strong>。
+    客户端往 <code>~/px4fan/ctl</code> 写一行字就退出，
+    服务每 50 毫秒读一次、读完即删。这样它和服务<strong>天然共存</strong>，
+    也不需要多一条 MAVLink 连接。后来在这上面又包了一层
+    <code>rod up</code> / <code>fan 35</code> 这样的短命令。
+  </p>
+
+  <h3>误判 13 · 日志"全绿"，我就以为通过了</h3>
+
+  <p>
+    这是十三次里最应该记住的一次——因为它<strong>不是 bug，是判断失误</strong>。
+  </p>
+
+  <p>
+    某次上机的日志里，三档识别全对、风扇没被干扰、退出归零正确，
+    我当时就准备往下推进了。但回头看那份记录，有三个关键项<strong>根本没被验证</strong>：
+    中位 1500 是不是<strong>真的能停住</strong>、杆子有没有<strong>真的动</strong>、
+    超时保护有没有<strong>真的触发</strong>（那次单次最长只有 8.5 秒，而阈值是 15 秒，压根没到）。
+  </p>
+
+  <div class="callout danger">
+    <div class="callout-icon">×</div>
+    <div class="callout-body">
+      <strong>"日志里没有报错"和"这一项通过了"是两件完全不同的事。</strong>
+      一条日志只能证明<strong>它打印出来的那件事</strong>。
+      凡是判据里写了"实际动作"的项，就必须有<strong>一次能触发它的操作</strong>，
+      否则那一行永远只是"还没轮到它出错"。
+    </div>
+  </div>
+
+  <h2 id="howto">四、怎么读一条刷屏日志</h2>
+
+  <p>
+    这套脚本每秒打两行，跑五分钟就是六百行。
+    但真正有信息量的只有<strong>状态发生跳变的那几行</strong>。
+    我的办法是把它<strong>压成一张时间轴表</strong>，只留跳变点：
+  </p>
+
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr><th>时刻</th><th>日志关键字段</th><th>它在证明什么</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>9.0s</td>
+          <td><code>CH6=1050us -&gt; 1000us [低档]</code></td>
+          <td>遥控器给 1050，实际下发 1000 —— <strong>量化生效</strong>，不是透传</td>
+        </tr>
+        <tr>
+          <td>10.5s</td>
+          <td><code>CH6=1500us -&gt; 1500us [中位]</code></td>
+          <td>回中即停，<strong>没有回到键盘上一次设的值</strong></td>
+        </tr>
+        <tr>
+          <td>12.0s</td>
+          <td><code>CH6=1950us -&gt; 2000us [高档]</code></td>
+          <td>反向量化，1950 → 2000</td>
+        </tr>
+        <tr>
+          <td>27.0s</td>
+          <td><code>已运行 15s，强制回中位</code> + <code>🔒超时保护中</code></td>
+          <td>12.0 起算，15 秒后准时截断 —— <strong>保护真的会触发</strong></td>
+        </tr>
+        <tr>
+          <td>27.0 → 55.1s</td>
+          <td>一直拨高档，输出<strong>死守 1500</strong></td>
+          <td>保护期内拨杆无效 —— <strong>锁定有效</strong></td>
+        </tr>
+        <tr>
+          <td>74.1s</td>
+          <td>高档 → 低档，中间划过中位</td>
+          <td>回中位自动解锁 —— <strong>反向操作能走</strong></td>
+        </tr>
+        <tr>
+          <td>89.1s</td>
+          <td>第二次 <code>已运行 15s</code></td>
+          <td>保护<strong>可以重复触发</strong>，不是一次性的</td>
+        </tr>
+        <tr>
+          <td>Ctrl-C</td>
+          <td><code>伸缩杆已回中位 1500us（停止）</code></td>
+          <td>双路同时归零 —— <strong>退出不留动作</strong></td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <p>
+    这张表只用了一个方法：<strong>每一行都必须回答"它在证明哪一条设计"</strong>。
+    答不出来的行，就是噪声；答得出来的行，一条也不能少。
+  </p>
+
+  <p>
+    顺带说清一个<strong>看起来像 bug 其实不是</strong>的现象：
+    用键盘敲 <code>ru</code> 时，超时保护触发后<strong>不会</strong>出现 <code>🔒</code>。
+    因为键盘不会拨动遥控器，通道一直停在中位，
+    脚本下一拍就判定"已回中位"并自动解锁——所以现象是"打印保护、杆子停下、状态回到中位"。
+    <code>🔒</code> 那个锁只出现在<strong>遥控器一直拨着不放</strong>的时候。
+  </p>
+
+  <h2 id="table">五、十三次，一张总表</h2>
+
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr><th>#</th><th>现象</th><th>我以为是</th><th>其实是</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>1</td><td>遥控器拨杆没数据</td><td>遥控器没连</td><td>订阅用了废弃接口，静默失效</td></tr>
+        <tr><td>2</td><td>scp 一直超时</td><td>网络断了</td><td>IP 给错，那是接飞控的口</td></tr>
+        <tr><td>3</td><td>新参数不认</td><td>代码没编过</td><td>文件根本没传上去</td></tr>
+        <tr><td>4</td><td>复合报错一大片</td><td>服务配错了</td><td>命令前面多了个字符，没执行</td></tr>
+        <tr><td>5</td><td>参数改了没变化</td><td>界面没保存</td><td>必须重启飞控才重新绑定输出</td></tr>
+        <tr><td>6</td><td>通道"已配置"但不响应</td><td>板子没发出去</td><td>下拉菜单选成了另一路</td></tr>
+        <tr><td>7</td><td>键盘方向反</td><td>映射写反了</td><td>只验证了一个输入源就下了结论</td></tr>
+        <tr><td>8</td><td>修完之后遥控器反了</td><td>遥控器本来也是反的</td><td>用一个开关同时翻了两个源</td></tr>
+        <tr><td>9</td><td>松手后杆子自己又走</td><td>回中没被识别</td><td>旧指令没作废，松手后复活</td></tr>
+        <tr><td>10</td><td>锁存速度不可重复</td><td>采样有噪声</td><td>弹簧杆上这功能本身不可定义</td></tr>
+        <tr><td>11</td><td>停服务后电机还转</td><td>进程没杀干净</td><td>SIGTERM 跳过 <code>finally</code></td></tr>
+        <tr><td>12</td><td>服务模式键盘失效</td><td>服务把键盘吃了</td><td>没有 tty，且端口已被独占</td></tr>
+        <tr><td>13</td><td>日志全对就以为通过</td><td>——</td><td>三项关键判据根本没被触发过</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <h2 id="rules">六、三条带得走的规则</h2>
+
+  <ol>
+    <li>
+      <strong>先分层，再怀疑。</strong>
+      "不动"有四个完全不同的层次会导致，每一层的确认手段不一样。
+      在错误的层上做的每一次尝试，都是零信息量的。
+    </li>
+    <li>
+      <strong>核对用哈希，不用名字。</strong>
+      文件名、时间戳、截图大小都可能骗人，哈希不会。
+      这一条能省掉后面所有的"是不是又把旧文件跑了一遍"。
+    </li>
+    <li>
+      <strong>改之前先记录"它现在的行为"，再动手。</strong>
+      十三次里有两次是"因为修错方向而变得更糟"，
+      两次都发生在没有先写下"原状"的时候。
+      <strong>同时改两个变量，等于放弃定位能力。</strong>
+    </li>
+  </ol>
+
+  <h2 id="todo">七、还没做的</h2>
+
+  <ul>
+    <li>
+      <strong>没飞过。</strong>所有验证都是吊装地面状态，振动、气流、供电波动是另一套输入。
+    </li>
+    <li>
+      <strong>行程没量准。</strong> 超时现在按 12 秒给，真实全行程秒数还是要掐表测一次。
+    </li>
+    <li>
+      <strong>硬件兜底没装。</strong> 限位开关 + 继电器还是纸面方案——
+      杆子顶在机械限位上时，软件超时是唯一的断电手段。
+    </li>
+    <li>
+      <strong>那十三次里，有七次本可以靠"先测原状"避免。</strong>
+      这条写在这里，提醒下一次的自己。
+    </li>
+  </ul>
+
+  <div class="post-footer">
+    <a class="btn" href="leidianniao-04-systemd.html">← 上一篇：断电重启之后</a>
+    <a class="btn btn-primary" href="leidianniao-01-architecture.html">回到第一篇 →</a>
+  </div>
+
+  </article>
+
+</main>
+
+<footer class="site-footer">
+  <div class="wrap-wide">
+    <span>qikai-lab · 雷电鸟实习手记</span>
+    <span>最近更新：2026-11-13</span>
+  </div>
+</footer>
+
+</body>
+</html>

@@ -1,0 +1,453 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>100 公斤的吹风机：光伏板清洁无人机的第一次控制链路 · 雷电鸟实习手记</title>
+<meta name="author" content="qikai-lab">
+<link rel="canonical" href="https://qikai-lab.github.io/posts/leidianniao-01-architecture.html">
+<meta property="og:type" content="article">
+<meta property="og:site_name" content="雷电鸟实习手记">
+<meta property="og:url" content="https://qikai-lab.github.io/posts/leidianniao-01-architecture.html">
+<meta name="description" content="新疆光伏电站的板面清洁，用 100 公斤级无人机挂两台风機贴着板面吹。这一篇讲清整机、要动的两路执行器，以及在三条控制路线里为什么最后选了「飞控做唯一 PWM 输出者」。">
+<link rel="stylesheet" href="../assets/css/style.css">
+</head>
+<body>
+
+<header class="site-header">
+  <nav class="nav">
+    <a class="brand" href="../index.html">
+      <span class="brand-mark">QL</span>
+      <span>qikai-lab</span>
+    </a>
+    <div class="nav-links">
+      <a href="../index.html">首页</a>
+      <a href="../projects/">项目</a>
+      <a href="../posts/" class="active">手记</a>
+      <a href="../index.html#about">关于</a>
+    </div>
+  </nav>
+</header>
+
+<main class="wrap">
+
+  <div class="post-header">
+    <div class="breadcrumb"><a href="../index.html">首页</a> / <a href="../posts/">手记</a> / 雷电鸟实习</div>
+    <h1>100 公斤的吹风机：光伏板清洁无人机的第一次控制链路</h1>
+    <div class="post-meta">
+      <span>2026-11-13</span>
+      <span class="dot">·</span>
+      <span class="tag done">双路已闭环</span>
+      <span class="tag">PX4</span>
+      <span class="tag">RK3588</span>
+      <span class="tag">MAVLink</span>
+      <span class="tag">方案选型</span>
+    </div>
+  </div>
+
+  <article class="prose">
+
+  <p>
+    这半个月我一直在做一台机器上的一件很小的事：<strong>让板子能控制两个东西动</strong>——
+    一路是风扇的转速，一路是伸缩杆的升降。听起来是两行代码的事，
+    实际上从协议、参数、时序、失效保护一路踩到 systemd，
+    中间推翻过三次设计。
+  </p>
+
+  <p>
+    这篇是开头。先把这个东西是什么、要动哪两路、以及<strong>为什么最后的结构是「飞控一个人说了算」</strong>讲清楚。
+    后面三篇再分别讲协议、仲裁和工程化。
+  </p>
+
+  <h2 id="scene">一、这个东西是干什么的</h2>
+
+  <p>
+    新疆的光伏电站，板面积灰很快。灰尘挡光，发电量直接掉，而当地最缺的恰恰是水——
+    传统的人工水洗在这类场站里成本高、周期长，人爬上去也不安全。
+  </p>
+
+  <p>
+    换一个思路：<strong>不洗，吹。</strong>让无人机挂着两台风機贴着板面走一遍，
+    把浮灰吹掉。风機要吹得有效，有两个前提——<strong>离板面够近</strong>，
+    以及<strong>转速够</strong>。这两件事，正好对应机上要控制的两路执行器。
+  </p>
+
+  <figure>
+    <img src="../assets/img/drone-top.jpg" alt="俯视角度：四旋翼无人机挂在白色吊绳上，四个碳纤维机臂末端是黑色大电机，中央机架上有电池与飞控线束，下方垂着风机组件">
+    <figcaption>
+      整机俯视。四旋翼、碳纤维圆管机臂、折叠桨，中央机架上设备还是散着的状态。
+      四角那四条白色粗绳是吊装绳——<strong>整机现在还挂在室内吊着做地面联调，没有真正起飞过</strong>。
+      这篇文章里所有的"验证通过"，都是在这个状态下得到的
+    </figcaption>
+  </figure>
+
+  <p>
+    这台机器是 100 公斤级。重量到这个量级，很多在小机器上可以随手做的事就变味了：
+    电机电流上百安、桨叶扫过的气流能把人推倒、任何一次误动作的代价都不是"摔一架小飞机"。
+    所以从第一天起，我在控制链上守的规矩就一条：
+    <strong>宁可少一个功能，不留一个"没人管得住"的输出。</strong>
+  </p>
+
+  <h2 id="two">二、要动的只有两路，但它们完全是两种东西</h2>
+
+  <figure>
+    <img src="../assets/img/drone-front.jpg" alt="正面视角：无人机用吊绳悬吊，四角起落架，机身下方一块黑色安装板上装有两个红色涵道风机，中间有竖直的连接管">
+    <figcaption>
+      正面。下方那块黑色板就是风机组件的安装基座，两个红色涵道风机朝下；
+      板和机身之间由中间的竖直连接件撑着——<strong>那个连接件就是后面要控制的"伸缩杆"</strong>，
+      它决定风机离板面多远
+    </figcaption>
+  </figure>
+
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr><th>执行器</th><th>要控制什么</th><th>信号形态</th><th>通道</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><strong>风机</strong></td>
+          <td>转速，连续可调</td>
+          <td>PWM 脉宽，1000–1600us 之间任意值</td>
+          <td>AUX3 / 遥控器 CH11</td>
+        </tr>
+        <tr>
+          <td><strong>伸缩杆</strong></td>
+          <td>上 / 停 / 下，只有三个位置</td>
+          <td>PWM 脉宽，只认 1000 / 1500 / 2000 三个整数</td>
+          <td>AUX2 / 遥控器 CH6</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <p>
+    这两路的差别比看上去大得多。<strong>风机是"连续量"，杆是三档"离散量"。</strong>
+    风机给 1250us 就是 1250us 对应的转速，中间每一档都有意义；
+    而杆的驱动器只认三个脉宽，遥控器给 1130us 它不认，给 1870us 它也不认——
+    <strong>必须先把连续值量化成三档，再发出去。</strong>
+  </p>
+
+  <p>
+    第一版代码我就栽在这上面：遥控器 CH6 实测行程是 1050 → 1500 → 1950，
+    而驱动器要的是 1000 / 1500 / 2000。差了 50us 看着不多，
+    但它落在驱动器"不认识的区间"里，行为就是不确定的。
+  </p>
+
+  <h2 id="why">三、三条路，为什么选了最难的那条</h2>
+
+  <p>
+    板子（RK3588，Ubuntu 22.04）要控制这两路，逻辑上有三种接法。
+    我三条都摆出来对比过：
+  </p>
+
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr><th>方案</th><th>接法</th><th>优点</th><th>致命问题</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><strong>B</strong></td>
+          <td>板子直接用 GPIO 出 PWM，绕过飞控，线直接接驱动器</td>
+          <td>链路最短，代码最简单</td>
+          <td>Linux 不是实时系统，PWM 抖动受调度影响；
+              板子一崩，输出停在最后的值，<strong>没有任何人能接管</strong></td>
+        </tr>
+        <tr>
+          <td><strong>C</strong></td>
+          <td>遥控器直通飞控（<code>PWM_AUX_FUNC=409</code>），板子并联一路做开关切换</td>
+          <td>平时摇杆直接生效，延迟最低</td>
+          <td>两路信号要在外部做切换电路，
+              <strong>切换瞬间的输出状态不可控</strong>；故障时到底谁在驱动，现场说不清</td>
+        </tr>
+        <tr>
+          <td><strong>A</strong></td>
+          <td>飞控是唯一的 PWM 输出者；板子通过 MAVLink 发指令，
+              遥控器也进飞控，由飞控/板子侧做优先级仲裁</td>
+          <td>输出只有一个源头，时序统一；
+              有超时、断链、上锁这些天然可用的保护机制</td>
+          <td>要自己实现仲裁逻辑；参数配错就完全不动（也确实踩了）</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <p>
+    选 A 的决定性理由不是"更优雅"，而是<strong>故障时的行为可预期</strong>。
+  </p>
+
+  <p>
+    方案 B 最要命的一点：Linux 上跑的那个 PWM 进程如果被 OOM killer 干掉、
+    或者整个板子死机，GPIO 会<strong>保持最后写进去的电平</strong>。
+    对风扇来说这是"继续吹"，对伸缩杆来说这是"继续往一个方向顶"。
+    而飞控固件里那些保护（信号丢失回中、超时、上锁）全都建立在
+    "输出是我发的"这个前提上——绕过它，等于把这些保护一起扔了。
+  </p>
+
+  <div class="callout info">
+    <div class="callout-icon">i</div>
+    <div class="callout-body">
+      <strong>方案 A 不是"更规范的写法"，它换来的是一整套现成的失效语义。</strong>
+      只要输出走飞控，就自动拥有：指令超时后的行为、链路中断后的行为、
+      上锁状态下的行为。这些东西如果自己做，每一条都要单独写、单独测。
+      <strong>能用硬件平台已有的语义，就别自己发明一套。</strong>
+    </div>
+  </div>
+
+  <h2 id="arch">四、方案 A 的实际结构</h2>
+
+  <p>
+    两路输入、一个输出者。遥控器和板子都进飞控，飞控按 <code>PWM_AUX_FUNC*</code>
+    把 Offboard 指令通道绑到具体的 AUX 口上：
+  </p>
+
+  <div class="diagram-box">
+    <svg viewBox="0 0 680 330" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="控制链结构图：遥控器与 RK3588 都连到 PX4 飞控，飞控通过 TIM5 的 50Hz PWM 输出驱动 AUX3 风机与 AUX2 伸缩杆">
+      <defs>
+        <marker id="ar" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto">
+          <path d="M0,0 L0,6 L7,3 z" fill="#475569"/>
+        </marker>
+      </defs>
+
+      <rect x="20" y="30" width="150" height="56" rx="9" fill="#f8fafc" stroke="#cbd5e1"/>
+      <text x="95" y="53" text-anchor="middle" font-size="13" fill="#0f172a" font-family="system-ui">遥控器</text>
+      <text x="95" y="72" text-anchor="middle" font-size="11" fill="#64748b" font-family="system-ui">CH11 风机 / CH6 杆</text>
+
+      <rect x="20" y="196" width="150" height="70" rx="9" fill="#f8fafc" stroke="#cbd5e1"/>
+      <text x="95" y="220" text-anchor="middle" font-size="13" fill="#0f172a" font-family="system-ui">RK3588</text>
+      <text x="95" y="238" text-anchor="middle" font-size="11" fill="#64748b" font-family="system-ui">Ubuntu 22.04</text>
+      <text x="95" y="254" text-anchor="middle" font-size="11" fill="#64748b" font-family="system-ui">pymavlink</text>
+
+      <rect x="250" y="88" width="170" height="112" rx="9" fill="#eff6ff" stroke="#93c5fd"/>
+      <text x="335" y="112" text-anchor="middle" font-size="13.5" fill="#0f172a" font-family="system-ui">PX4 飞控</text>
+      <text x="335" y="131" text-anchor="middle" font-size="11" fill="#64748b" font-family="system-ui">Pixhawk V6X</text>
+      <text x="335" y="149" text-anchor="middle" font-size="11" fill="#64748b" font-family="system-ui">唯一 PWM 输出者</text>
+      <text x="335" y="167" text-anchor="middle" font-size="11" fill="#64748b" font-family="system-ui">优先级仲裁在这里</text>
+      <text x="335" y="187" text-anchor="middle" font-size="11" fill="#94a3b8" font-family="system-ui">MAV_2 = Ethernet</text>
+
+      <rect x="500" y="30" width="160" height="62" rx="9" fill="#fef2f2" stroke="#fca5a5"/>
+      <text x="580" y="52" text-anchor="middle" font-size="12.5" fill="#0f172a" font-family="system-ui">AUX3 · Set3</text>
+      <text x="580" y="70" text-anchor="middle" font-size="11" fill="#64748b" font-family="system-ui">1000–1600us 连续</text>
+      <text x="580" y="85" text-anchor="middle" font-size="11" fill="#b91c1c" font-family="system-ui">→ 风机</text>
+
+      <rect x="500" y="152" width="160" height="62" rx="9" fill="#f0fdf4" stroke="#86efac"/>
+      <text x="580" y="174" text-anchor="middle" font-size="12.5" fill="#0f172a" font-family="system-ui">AUX2 · Set2</text>
+      <text x="580" y="192" text-anchor="middle" font-size="11" fill="#64748b" font-family="system-ui">1000/1500/2000 三档</text>
+      <text x="580" y="207" text-anchor="middle" font-size="11" fill="#15803d" font-family="system-ui">→ 伸缩杆</text>
+
+      <line x1="170" y1="58" x2="244" y2="105" stroke="#475569" stroke-width="1.6" marker-end="url(#ar)"/>
+      <text x="176" y="96" font-size="10.5" fill="#64748b" font-family="system-ui">SBUS</text>
+
+      <line x1="170" y1="231" x2="244" y2="180" stroke="#475569" stroke-width="1.6" marker-end="url(#ar)"/>
+      <text x="176" y="238" font-size="10.5" fill="#64748b" font-family="system-ui">DO_SET_ACTUATOR</text>
+      <text x="176" y="254" font-size="10.5" fill="#64748b" font-family="system-ui">UDP 14540</text>
+
+      <line x1="420" y1="112" x2="496" y2="72" stroke="#b91c1c" stroke-width="1.6" marker-end="url(#ar)"/>
+      <text x="426" y="134" font-size="10.5" fill="#b91c1c" font-family="system-ui">TIM5 · 50Hz</text>
+
+      <line x1="420" y1="176" x2="496" y2="180" stroke="#15803d" stroke-width="1.6" marker-end="url(#ar)"/>
+      <text x="430" y="198" font-size="10.5" fill="#15803d" font-family="system-ui">TIM5 · 50Hz</text>
+
+      <text x="340" y="290" text-anchor="middle" font-size="11" fill="#94a3b8" font-family="system-ui">任何一个输入源失效，飞控侧的超时逻辑都能让输出回到安全值</text>
+    </svg>
+    <div class="diagram-legend">
+      <span>实线 = 指令流</span>
+      <span>输出端只有飞控一个源头</span>
+      <span>示波器实测输出周期 20ms</span>
+    </div>
+  </div>
+
+  <p>
+    注意图上输出那一侧：AUX3 和 AUX2 挂在<strong>同一个定时器 TIM5</strong> 上，
+    和 AUX1、AUX4 一组，共用 <code>PWM_AUX_TIM0</code> 这个频率参数。
+    这点在后面用示波器验证的时候会再出现一次——因为它意味着
+    <strong>两路输出的刷新率是绑死在一起的，不是各调各的</strong>。
+  </p>
+
+  <h2 id="probe">五、先给这条链做一次体检</h2>
+
+  <p>
+    在动任何代码之前，我写了一个 <code>probe</code> 子命令，
+    把飞控里和这条链有关的参数一次性拉出来全量看一遍（1166 项）。
+    这个决定后来救了很多时间——<strong>大部分"代码不生效"的问题，
+    在现场其实表现为"参数和你想的不一样"</strong>。
+  </p>
+
+  <pre>python3 px4_actuator_client.py probe</pre>
+
+  <p>它输出的五段，正好对应这条链的五个环节：</p>
+
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr><th>段</th><th>看什么</th><th>当时的实际值</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>1 · MAVLink 实例</td>
+          <td>板子从哪个口进来</td>
+          <td><code>MAV_2 = Ethernet，14540，模式 2</code></td>
+        </tr>
+        <tr>
+          <td>2 · 安全与预解锁</td>
+          <td>非油门执行器要不要解锁</td>
+          <td><code>COM_PREARM_MODE=2</code>（Always），<code>CBRK_IO_SAFETY=22027</code>（安全开关已旁路）</td>
+        </tr>
+        <tr>
+          <td>3 · 输出口分配</td>
+          <td>每个 AUX 口绑了什么功能、范围多少</td>
+          <td>AUX2 = Set2（1000/1500/2000）；AUX3 = Set3（1000/1300/1600）</td>
+        </tr>
+        <tr>
+          <td>4 · 遥控器通道映射</td>
+          <td>摇杆通道和 AUX 口的对应关系</td>
+          <td><code>RC_MAP_AUX2→CH6</code>、<code>RC_MAP_AUX3→CH11</code></td>
+        </tr>
+        <tr>
+          <td>5 · 诊断</td>
+          <td>有没有配了却没人驱动的死口</td>
+          <td><code>已配 Offboard Actuator: AUX2=Set2, AUX3=Set3</code></td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <p>
+    第 5 段是这份体检报告里最有价值的部分：它不列出"有什么"，
+    而是列出<strong>"什么看起来有、实际没有"</strong>。当时它报了一条：
+  </p>
+
+  <pre>⚠ AUX6 配成 RC AUX 6，但 RC_MAP_AUX6=0 —— 该口无通道驱动，等于死口</pre>
+
+  <p>
+    这个口配了功能，但没有任何遥控器通道喂它，所以它永远输出 1500。
+    不影响这次任务，但<strong>这种"配置存在、功能不存在"的口，
+    在排障时是最容易被误当成原因的一条</strong>——因为它看起来是"已配置"的。
+  </p>
+
+  <div class="callout warn">
+    <div class="callout-icon">!</div>
+    <div class="callout-body">
+      <strong>体检报告比日志有用，因为它在你动手之前就告诉你现状。</strong>
+      我后来的习惯是：任何"指令发下去了但没反应"的情况，
+      先跑 <code>probe</code>，再看代码。<strong>顺序反过来会浪费大量时间</strong>——
+      你会去怀疑自己刚写的那二十行，而问题在三个月前配的一个参数上。
+    </div>
+  </div>
+
+  <h2 id="osc">六、第一次拿到"真的在动"的证据</h2>
+
+  <p>
+    软件层面能看到的只有"我发了什么"，看不到"线上实际是什么"。
+    这两件事之间的差距，是这一整套东西里最容易骗人的地方——
+    日志写着 <code>输出 1200us</code>，可能线上什么都没有。
+  </p>
+
+  <p>
+    所以风扇这一路跑通之后，我做的第一件事是接示波器，
+    把飞控 AUX 口的实际输出抓下来。三张图对应三个不同指令：
+  </p>
+
+  <figure>
+    <img src="../assets/img/osc-duty-6pct.jpg" alt="示波器屏幕：黄色方波，底部读数为 Period=20.00ms、Freq=50.0Hz、Duty=6.000%">
+    <figcaption>
+      指令给 1200us 时：周期 <strong>20.00ms</strong>（50.0Hz），占空比 <strong>6.000%</strong>。
+      20ms × 6% = 1.2ms，和指令完全对得上
+    </figcaption>
+  </figure>
+
+  <figure>
+    <img src="../assets/img/osc-duty-7p5pct.jpg" alt="示波器屏幕：同样的黄色方波，高电平变宽，读数 Duty=7.500%">
+    <figcaption>
+      指令给 1500us 时：周期还是 20ms，占空比变成 <strong>7.500%</strong>（=1.5ms）。
+      <strong>变的只有高电平宽度，周期一动不动</strong>
+    </figcaption>
+  </figure>
+
+  <figure>
+    <img src="../assets/img/osc-duty-10pct.jpg" alt="示波器屏幕：高电平进一步变宽，读数 Duty=10.00%">
+    <figcaption>
+      指令给 2000us 时：占空比 <strong>10.00%</strong>（=2.0ms）。
+      三个点连起来是一条直线：<strong>脉宽和指令严格线性对应</strong>
+    </figcaption>
+  </figure>
+
+  <p>
+    这三张图值得单独说一句，因为它们同时确认了三件事：
+  </p>
+
+  <ol>
+    <li>
+      <strong>指令真的变成了电信号。</strong>
+      不是"程序说它发了"，是线上真的有这个宽度。
+    </li>
+    <li>
+      <strong>频率是 50Hz，正好等于 <code>PWM_AUX_TIM0</code> 的值。</strong>
+      AUX1–4 共用 TIM5，所以这个频率是四个口一起的，
+      不是每个口单独设的——这一点在同时驱动两路的时候很关键。
+    </li>
+    <li>
+      <strong>改的是脉宽，不是频率。</strong>
+      周期从头到尾 20.00ms 没变过。这条对舵机、电调、驱动器都成立：
+      <strong>它们读的是高电平持续多久，不是重复得多快。</strong>
+    </li>
+  </ol>
+
+  <div class="callout success">
+    <div class="callout-icon">✓</div>
+    <div class="callout-body">
+      <strong>示波器这一步是整条链上唯一"不可辩驳"的证据。</strong>
+      日志可以被自己的代码骗（打的是变量不是实际值），
+      MAVLink 回执只能说明消息被收下，QGC 界面显示的是飞控的意图。
+      只有探针夹在线上，看到的才是真相。
+      <strong>凡是涉及"到底有没有输出"的问题，能上示波器就别靠猜。</strong>
+    </div>
+  </div>
+
+  <h2 id="next">七、后面三篇写什么</h2>
+
+  <p>
+    这一篇只到"结构定了、链路通了"。真正花时间的是下面三件事：
+  </p>
+
+  <ul>
+    <li>
+      <strong>协议层</strong>：一条 <code>DO_SET_ACTUATOR</code> 怎么同时控两路、
+      <code>NaN</code> 是什么语义、<code>PWM_AUX_FUNC</code> 那几个枚举值分别代表什么。
+      还有那个让遥控器"推不动"的坑——PX4 1.16 废弃了旧的取流接口。
+    </li>
+    <li>
+      <strong>仲裁层</strong>：遥控器和板子同时想控的时候谁说了算。
+      这一块我推翻过三次设计，最后落在一条很硬的语义上：
+      <strong>松手就停，不回旧值</strong>。
+    </li>
+    <li>
+      <strong>工程层</strong>：怎么让一个 Python 脚本变成"上电就在跑"的东西，
+      以及没有终端的时候怎么给它下指令。
+    </li>
+  </ul>
+
+  <p>
+    如果这个系列只留一句关于架构的话，我留这句：
+    <strong>执行器的输出源头，一个就够；多一个，就多一种没人能解释的故障。</strong>
+  </p>
+
+  <div class="post-footer">
+    <a class="btn" href="leidianniao-02-mavlink-actuator.html">下一篇：一条消息控两路 →</a>
+    <a class="btn btn-primary" href="../posts/">看全部手记 →</a>
+  </div>
+
+  </article>
+
+</main>
+
+<footer class="site-footer">
+  <div class="wrap-wide">
+    <span>qikai-lab · 雷电鸟实习手记</span>
+    <span>最近更新：2026-11-13</span>
+  </div>
+</footer>
+
+</body>
+</html>

@@ -1,0 +1,492 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>谁说了算：遥控器、板子，和那个"松手就停"的仲裁器 · 雷电鸟实习手记</title>
+<meta name="author" content="qikai-lab">
+<link rel="canonical" href="https://qikai-lab.github.io/posts/leidianniao-03-arbiter.html">
+<meta property="og:type" content="article">
+<meta property="og:site_name" content="雷电鸟实习手记">
+<meta property="og:url" content="https://qikai-lab.github.io/posts/leidianniao-03-arbiter.html">
+<meta name="description" content="遥控器和板子同时想控的时候听谁的？这一篇记录一个仲裁器被推翻三次的过程：从 HOLD 锁存到三选一模式，最后落成一条硬语义——松手就停、不回旧值、夺权即作废。附超时保护与防堵转。">
+<link rel="stylesheet" href="../assets/css/style.css">
+</head>
+<body>
+
+<header class="site-header">
+  <nav class="nav">
+    <a class="brand" href="../index.html">
+      <span class="brand-mark">QL</span>
+      <span>qikai-lab</span>
+    </a>
+    <div class="nav-links">
+      <a href="../index.html">首页</a>
+      <a href="../projects/">项目</a>
+      <a href="../posts/" class="active">手记</a>
+      <a href="../index.html#about">关于</a>
+    </div>
+  </nav>
+</header>
+
+<main class="wrap">
+
+  <div class="post-header">
+    <div class="breadcrumb"><a href="../index.html">首页</a> / <a href="../posts/">手记</a> / 雷电鸟实习</div>
+    <h1>谁说了算：遥控器、板子，和那个"松手就停"的仲裁器</h1>
+    <div class="post-meta">
+      <span>2026-11-13</span>
+      <span class="dot">·</span>
+      <span class="tag done">已上机验证</span>
+      <span class="tag">状态机</span>
+      <span class="tag">优先级仲裁</span>
+      <span class="tag">超时保护</span>
+      <span class="tag">防堵转</span>
+    </div>
+  </div>
+
+  <article class="prose">
+
+  <p>
+    协议通了之后，问题从"能不能控"变成"谁说了算"。
+    两个输入源：<strong>遥控器</strong>（人，随时可能介入）和<strong>板子</strong>（程序，按自己的节奏）。
+    它们都想改同一个执行器的输出，而这个输出只能有一个值。
+  </p>
+
+  <p>
+    这一篇记录的不是我怎么设计出来的，是<strong>我怎么被推翻三次的</strong>。
+    三次都推翻在同一个点上：我对"人松手之后应该发生什么"的理解，一直在拿小机器的直觉套大机器。
+  </p>
+
+  <h2 id="v1">一、第一版：HOLD，保持最后的值</h2>
+
+  <p>
+    最初的写法很自然，几乎所有教程都这么干：<strong>遥控器一动，接管；摇杆回中，保持刚才的值。</strong>
+  </p>
+
+  <pre>if rc_pwm is not None and abs(rc_pwm - 1500) &gt; 30:
+    hold_value = rc_pwm          # 摇杆一动，记下来
+    mode = "RC"
+elif mode == "RC":
+    mode = "HOLD"                # 回中，但不放弃这个值</pre>
+
+  <p>
+    这个逻辑在摇杆上是拨杆开关的设备上没问题。
+    但这台风扇接的是一个<strong>弹簧回中的摇杆</strong>——手一松，它自己弹回中间。
+  </p>
+
+  <p>
+    于是"回中即保持"变成了一件很怪的事：<strong>你想让风扇加速，就得一直推着摇杆不放。</strong>
+    松手它就锁在那个位置上不动了，既不停、也不回程序控制，
+    只能靠再推一下摇杆把它改掉。
+  </p>
+
+  <div class="callout warn">
+    <div class="callout-icon">!</div>
+    <div class="callout-body">
+      <strong>更麻烦的是"锁住的值"不可重复。</strong>
+      同样是想锁在 1300us，快速弹一下摇杆锁到 1300，慢慢推过去锁到 1081——
+      因为锁存用的是<strong>采样到的那一拍的值</strong>，而采样时刻取决于你手速。
+      这意味着<strong>同一个操作得不到同一个结果</strong>。
+      一个设备如果做不到"同样的动作产生同样的结果"，它就没法被信任。
+    </div>
+  </div>
+
+  <h2 id="v2">二、第二版：给三种语义都留个开关</h2>
+
+  <p>
+    第一次被推翻之后，我的反应是"那就做成可配的"：
+    加了 <code>--hold-mode latch | follow | off</code> 三个选项，
+    锁存、跟随、完全不管，让使用者自己挑。
+  </p>
+
+  <p>
+    这个方案活了不到一轮测试就被否了，理由很直接：
+    <strong>一个设备不该让人在"它到底怎么工作"这件事上做选择题。</strong>
+    三种模式意味着三套行为、三套测试、三份文档，
+    而且现场没有人会在起飞前先确认当前是哪个模式——
+    <strong>可配置性在这里不是灵活性，是把设计责任推给了使用者。</strong>
+  </p>
+
+  <div class="callout info">
+    <div class="callout-icon">i</div>
+    <div class="callout-body">
+      <strong>这是我这半个月最有价值的一课。</strong>
+      我当时的直觉是"多做几个选项总不会错"，但真实的工程判断是：
+      <strong>如果一个参数需要使用者理解你的内部状态才能正确设置，
+      那它就是设计缺陷的遮羞布。</strong>
+      正确的做法是把语义收敛到唯一一种、并且这一种必须能被一句话说清。
+    </div>
+  </div>
+
+  <h2 id="v3">三、第三版：松手就停，不回旧值</h2>
+
+  <p>
+    最后定下来的语义只有一句：
+  </p>
+
+  <blockquote>
+    <strong>摇杆一动，遥控器接管；摇杆一回中，输出立刻回到最低位（停转），
+    既不留住刚才的值，也不回到板子之前设的值。此后只有板子再发指令，才重新接管。</strong>
+  </blockquote>
+
+  <p>
+    翻译成状态机就是三个态，没有第四种可能：
+  </p>
+
+  <div class="diagram-box">
+    <svg viewBox="0 0 680 285" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="风扇仲裁状态机：AUTO 与 RC 之间由摇杆是否离中互相切换，RC 松杆后进入 IDLE，IDLE 只能由板子指令回到 AUTO">
+      <defs>
+        <marker id="a2" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto">
+          <path d="M0,0 L0,6 L7,3 z" fill="#475569"/>
+        </marker>
+        <marker id="a2r" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto">
+          <path d="M0,0 L0,6 L7,3 z" fill="#b91c1c"/>
+        </marker>
+      </defs>
+
+      <rect x="30" y="92" width="150" height="76" rx="10" fill="#eff6ff" stroke="#93c5fd"/>
+      <text x="105" y="118" text-anchor="middle" font-size="14" fill="#0f172a" font-family="system-ui">AUTO</text>
+      <text x="105" y="138" text-anchor="middle" font-size="10.5" fill="#64748b" font-family="system-ui">板子设定中</text>
+      <text x="105" y="154" text-anchor="middle" font-size="10.5" fill="#64748b" font-family="system-ui">输出 = 键盘/自动值</text>
+
+      <rect x="265" y="92" width="150" height="76" rx="10" fill="#fef2f2" stroke="#fca5a5"/>
+      <text x="340" y="118" text-anchor="middle" font-size="14" fill="#0f172a" font-family="system-ui">RC</text>
+      <text x="340" y="138" text-anchor="middle" font-size="10.5" fill="#64748b" font-family="system-ui">遥控器接管</text>
+      <text x="340" y="154" text-anchor="middle" font-size="10.5" fill="#64748b" font-family="system-ui">输出跟手</text>
+
+      <rect x="500" y="92" width="150" height="76" rx="10" fill="#f8fafc" stroke="#cbd5e1"/>
+      <text x="575" y="118" text-anchor="middle" font-size="14" fill="#0f172a" font-family="system-ui">IDLE</text>
+      <text x="575" y="138" text-anchor="middle" font-size="10.5" fill="#64748b" font-family="system-ui">松杆即停</text>
+      <text x="575" y="154" text-anchor="middle" font-size="10.5" fill="#64748b" font-family="system-ui">输出 = 最低位</text>
+
+      <line x1="180" y1="118" x2="259" y2="118" stroke="#b91c1c" stroke-width="1.8" marker-end="url(#a2r)"/>
+      <text x="220" y="108" text-anchor="middle" font-size="10.5" fill="#b91c1c" font-family="system-ui">摇杆离中</text>
+
+      <line x1="259" y1="142" x2="180" y2="142" stroke="#475569" stroke-width="1.8" marker-end="url(#a2)"/>
+      <text x="220" y="160" text-anchor="middle" font-size="10.5" fill="#64748b" font-family="system-ui">无遥控器信号</text>
+
+      <line x1="415" y1="118" x2="494" y2="118" stroke="#b91c1c" stroke-width="1.8" marker-end="url(#a2r)"/>
+      <text x="455" y="108" text-anchor="middle" font-size="10.5" fill="#b91c1c" font-family="system-ui">摇杆回中</text>
+
+      <path d="M575 92 C 575 30, 105 30, 105 88" fill="none" stroke="#475569" stroke-width="1.8" stroke-dasharray="5 4" marker-end="url(#a2)"/>
+      <text x="340" y="26" text-anchor="middle" font-size="10.5" fill="#475569" font-family="system-ui">板子下发新指令（键盘 / set 命令）</text>
+
+      <text x="340" y="240" text-anchor="middle" font-size="11" fill="#94a3b8" font-family="system-ui">没有 HOLD 态：任何一条从 RC 出去的路，都通向"停"</text>
+      <text x="340" y="262" text-anchor="middle" font-size="11" fill="#94a3b8" font-family="system-ui">遥控器优先级高于板子，但它不继承、也不保存任何值</text>
+    </svg>
+    <div class="diagram-legend">
+      <span>红色 = 遥控器夺权方向</span>
+      <span>虚线 = 只有主动指令能回 AUTO</span>
+    </div>
+  </div>
+
+  <p>
+    这个状态机有一个反直觉的性质：<strong>遥控器优先级最高，但它什么都不"继承"。</strong>
+    它不是一个会接管并保持的控制器，它是一个<strong>只有手按着才有效的开关</strong>。
+  </p>
+
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr><th>你做的动作</th><th>旧版（HOLD）</th><th>现在</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>推摇杆到 70%，然后松手</td><td>维持 70%，一直转</td><td><strong>立刻停</strong></td></tr>
+        <tr><td>推摇杆到 70%，停 3 秒，松手</td><td>维持 70%</td><td><strong>立刻停</strong></td></tr>
+        <tr><td>推摇杆到 70%，松手，再推 50%</td><td>变成 50%</td><td>50%，松手即停</td></tr>
+        <tr><td>松手之后板子想控</td><td>控不了，要等遥控器再动</td><td><strong>立刻可以控</strong></td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <p>
+    第一行和第二行是同一个结果——这正是它比 HOLD 好的地方：
+    <strong>怎么推的不重要，松手就是停。</strong>行为可重复了。
+  </p>
+
+  <h2 id="rod">四、伸缩杆上，同一件事换了个样子</h2>
+
+  <p>
+    风扇那一套落到杆上，只改了一个字，就出了一个很隐蔽的 bug。
+  </p>
+
+  <p>
+    杆没有"回中即停"的问题——它本来就有中位这个档。
+    但它是<strong>保持型</strong>的：拨到低档，杆就一直往下走，直到你拨回来。
+    所以"遥控器优先"不能只做"接管"，还要做<strong>"作废"</strong>。
+  </p>
+
+  <p>
+    第一版的写法是：遥控器离中 → 用遥控器的值；遥控器回中 → 用板子的值。
+    逻辑上没毛病，实际表现是：
+  </p>
+
+  <pre>板子敲了 rd（向下）  →  杆往下走
+遥控器往上拨夺权     →  杆改向上走        ✓ 这部分是对的
+遥控器松手回中       →  杆又开始往下走    ✗ 它去执行板子那条旧指令了</pre>
+
+  <p>
+    现场的感受非常明确：<strong>"我夺了权，松手它又自己跑回去了。"</strong>
+  </p>
+
+  <p>
+    根因是那个 <code>rod_auto</code> 变量一直存着 <code>2000</code>。
+    遥控器的介入只是<strong>临时覆盖</strong>了输出，没有消掉这条指令；
+    覆盖一撤，旧指令原封不动地又生效了。
+  </p>
+
+  <p>
+    改法是在遥控器<strong>离中的那一刻</strong>，就把这个变量清零：
+  </p>
+
+  <pre>elif rod_pwm &lt; rod_center - rod_midband:
+    rod_state, rod_want = "LOW", rod_mn
+    rod_auto = rod_trim          # ← 夺权即作废，回中后读到的就是"停"
+elif rod_pwm &gt; rod_center + rod_midband:
+    rod_state, rod_want = "HIGH", rod_mx
+    rod_auto = rod_trim</pre>
+
+  <div class="callout success">
+    <div class="callout-icon">✓</div>
+    <div class="callout-body">
+      <strong>"接管"和"作废"是两件事。</strong>
+      接管是"这一拍用我的值"，作废是"你的指令从此不存在"。
+      只做前者，就会得到一个<strong>松手后会自己恢复动作</strong>的机器——
+      在会动的设备上，这是最危险的一类行为：它在你以为事情结束之后才发生。
+    </div>
+  </div>
+
+  <h2 id="timeout">五、超时保护：从"防跑飞"变成"防堵转"</h2>
+
+  <p>
+    还有一个必须有的东西：<strong>同方向连续运行超时，强制回中。</strong>
+  </p>
+
+  <p>
+    起初我把它理解成"防跑飞"——万一程序算错了，别让它一直往一个方向走。
+    但现场量完行程之后，它的作用变了。
+  </p>
+
+  <figure>
+    <img src="../assets/img/drone-bottom.jpg" alt="底部视角：四角起落架，下方黑色安装板上两个红色涵道风机，机身上可见零散线束">
+    <figcaption>
+      底部视角。杆的行程两端都有<strong>物理限位</strong>——走到底会被机械挡住，位置不会越界。
+      但限位挡的是<strong>位置</strong>，挡不住<strong>电流</strong>：杆顶死在限位上，电机仍然在通电，处于堵转状态
+    </figcaption>
+  </figure>
+
+  <p>
+    这就是关键：<strong>"不会越界"和"不会烧"是两件事。</strong>
+    物理限位解决了前者，后者只能靠"到时间就断电"。
+    堵转的电机不转，但电流照走，热量全堆在绕组里。几分钟就能闻到味道。
+  </p>
+
+  <p>
+    所以超时值不能拍脑袋，得有实测依据：
+  </p>
+
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr><th>参数</th><th>怎么定</th><th>定错的后果</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><code>--rod-timeout</code></td>
+          <td><strong>全行程秒数 + 3</strong></td>
+          <td>设短了：杆走一半被截停，功能直接不可用</td>
+        </tr>
+        <tr>
+          <td></td>
+          <td></td>
+          <td>设长了：在限位上多堵几秒，白发热</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <p>
+    实测下来，把超时设成 15 秒、拨着高档不松手，第 15 秒准时打印：
+  </p>
+
+  <pre>[保护] 伸缩杆同方向已运行 15s，强制回中位 1500us；CH6 回中位后才恢复控制
+  [AUTO] ... 27.0s  |  CH6=1950us -&gt; 伸缩杆 1500us [高档]  🔒超时保护中</pre>
+
+  <p>
+    注意这一行里 <code>CH6=1950us</code> 和 <code>伸缩杆 1500us</code> 同时存在——
+    <strong>输入仍然读得到，但输出被压回中位。</strong>这就是"保护优先级高于摇杆"的证据。
+    而且此时<strong>继续拨杆无效</strong>，必须先回中位才能解锁，否则就成了"按住不放就能无限顶住"。
+  </p>
+
+  <div class="callout danger">
+    <div class="callout-icon">!</div>
+    <div class="callout-body">
+      <strong>软件保护只覆盖"程序还活着"这一种情况。</strong>
+      板子死机、网线被拔、进程被 OOM 杀掉——这三种情况下，
+      杆会保持最后一个方向一直顶在限位上，直到有人手动断电。
+      所以硬件兜底<strong>不是可选项</strong>：两端各一只常闭微动限位开关，
+      串一个继电器在杆电机的电源正极上。软件负责"正常时不堵"，
+      硬件负责"异常时一定断"。
+    </div>
+  </div>
+
+  <h2 id="cap">六、限速：一个必须同时管住两条通道的数</h2>
+
+  <p>
+    风扇那一路有个额外的约束：<strong>不许超过 1400us。</strong>
+    这既是保护风机本身（长时间满转的电流和温升），也是保护供电。
+  </p>
+
+  <p>
+    第一版我把限速写在了"自治输出"这一支上，结果遥控器接管的时候可以轻松推过 1400——
+    <strong>限速形同虚设，因为它只管了一条路。</strong>
+  </p>
+
+  <p>
+    改法是把截断放在<strong>最终下发之前</strong>，不管这个值从哪来：
+  </p>
+
+  <pre>actual = final_target
+if cap &gt; 0:
+    actual = min(actual, cap)     # 遥控器、键盘、自动，一律截断
+norm = (actual - mn) / (mx - mn) * 2.0 - 1.0</pre>
+
+  <p>
+    于是有了这张对照表（<code>--cap 1400</code>，AUX3 范围 1000–1600）：
+  </p>
+
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr><th>板子设定</th><th>不加限速时的脉宽</th><th>限速 1400 后实际</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>0%</td><td>1000us</td><td>1000us</td></tr>
+        <tr><td>20%</td><td>1120us</td><td>1120us</td></tr>
+        <tr><td>40%</td><td>1240us</td><td>1240us</td></tr>
+        <tr><td>60%</td><td>1360us</td><td>1360us</td></tr>
+        <tr><td><strong>66.7%</strong></td><td>1400us</td><td><strong>1400us（临界点）</strong></td></tr>
+        <tr><td>80%</td><td>1480us</td><td><strong>1400us</strong></td></tr>
+        <tr><td>100%</td><td>1600us</td><td><strong>1400us</strong></td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <p>
+    换算关系很简单：<strong>实际 = 1000 + 设定百分比 × 6</strong>，超过 66.7% 全部撞上 1400。
+    同一件事在遥控器侧的表现是：<strong>摇杆最后三分之一是空程</strong>——
+    推过去输出不再变化，因为已经封顶了。
+  </p>
+
+  <div class="callout info">
+    <div class="callout-icon">i</div>
+    <div class="callout-body">
+      <strong>空程不是 bug，是限速的必然结果。</strong>
+      但现场很容易把它当成"遥控器坏了"——因为推杆没反应。
+      所以日志里必须明确打出 <code>⛔已达限速</code>，
+      让人知道<strong>不是信号没到，是到了被截断了</strong>。
+      <strong>同一个现象（没反应）对应两种完全不同的原因，界面上必须区分开。</strong>
+    </div>
+  </div>
+
+  <h2 id="dir">七、方向：我在这里犯了最蠢的一次错</h2>
+
+  <p>
+    实测下来，杆的驱动器是这么对应的：
+  </p>
+
+  <pre>1000us = 向上     1500us = 停     2000us = 向下</pre>
+
+  <p>
+    而代码里一开始假设的是反的（2000 向上）。第一次上机，敲 <code>ru</code> 杆往下走。
+    这时候正确的做法是<strong>只改键盘这一侧的映射</strong>。
+  </p>
+
+  <p>
+    但我当时想的是"既然方向反了，就加一个全局镜像开关 <code>--rod-invert</code>，
+    键盘和遥控器一起翻，一劳永逸"。结果是：
+  </p>
+
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr><th>输入源</th><th>真实情况</th><th>加了全局镜像之后</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>键盘 <code>ru</code></td><td>原来给 2000 → 杆向下（错的）</td><td>改成 1000 → 向上 ✓</td></tr>
+        <tr><td>遥控器 CH6 低档</td><td>给 1000 → 杆向上（<strong>本来就是对的</strong>）</td><td>翻成 2000 → 向下 <strong>✗ 反而改坏了</strong></td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <p>
+    错在我把"两个输入源"当成了一个东西。<strong>它们的方向本来就是相反的。</strong>
+    遥控器是往上拨给低值，键盘是往上按给高值，两者在代码里汇到同一个变量之前，
+    符号已经不一样了。用一把剪刀同时剪两边，必然剪坏一边。
+  </p>
+
+  <p>
+    最后的做法：删掉 <code>--rod-invert</code>，只在键盘分支里对调 <code>u</code> 和 <code>d</code>。
+    遥控器那一路一个字都没动。改完的对照表是这样：
+  </p>
+
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr><th>操作</th><th>下发</th><th>杆的动作</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>遥控器往上拨（1050，低档）</td><td>1000us</td><td>向上</td></tr>
+        <tr><td>遥控器居中（1500）</td><td>1500us</td><td>停</td></tr>
+        <tr><td>遥控器往下拨（1950，高档）</td><td>2000us</td><td>向下</td></tr>
+        <tr><td>键盘 <code>ru</code></td><td>1000us</td><td>向上</td></tr>
+        <tr><td>键盘 <code>rm</code></td><td>1500us</td><td>停</td></tr>
+        <tr><td>键盘 <code>rd</code></td><td>2000us</td><td>向下</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="callout warn">
+    <div class="callout-icon">!</div>
+    <div class="callout-body">
+      <strong>不要用"全局开关"去修"局部符号错误"。</strong>
+      开关看起来省事，实际是把一个具体 bug 抽象成了一个必须被理解的配置项。
+      而且它一旦存在，后面所有方向问题都会被归到它头上，
+      <strong>真正的符号错误就被掩盖了</strong>。
+    </div>
+  </div>
+
+  <h2 id="recap">八、这一层的四条规矩</h2>
+
+  <ol>
+    <li><strong>松杆即停，不回旧值。</strong> 遥控器只有手按着才有效，别让它持有任何状态。</li>
+    <li><strong>夺权要连指令一起作废。</strong> 只覆盖输出不清指令，松手就会自己恢复动作。</li>
+    <li><strong>超时是防堵转，不是防跑飞。</strong> 物理限位挡位置，挡不住电流。</li>
+    <li><strong>限速要截在最后一步。</strong> 只管一条支路的限速等于没有限速。</li>
+  </ol>
+
+  <p>
+    到这里，功能是完整的了：两路能控、优先级清楚、松手会停、超时会断。
+    但它还是一个"必须在终端里手动敲起来"的脚本——关掉终端、拔掉键盘、断开 SSH，它就没了。
+    最后一篇写怎么让它变成设备的一部分。
+  </p>
+
+  <div class="post-footer">
+    <a class="btn" href="leidianniao-02-mavlink-actuator.html">← 上一篇：一条消息控两路</a>
+    <a class="btn btn-primary" href="leidianniao-04-systemd.html">下一篇：断电重启之后 →</a>
+  </div>
+
+  </article>
+
+</main>
+
+<footer class="site-footer">
+  <div class="wrap-wide">
+    <span>qikai-lab · 雷电鸟实习手记</span>
+    <span>最近更新：2026-11-13</span>
+  </div>
+</footer>
+
+</body>
+</html>

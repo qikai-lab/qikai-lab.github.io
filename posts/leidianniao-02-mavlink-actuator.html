@@ -1,0 +1,414 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>一条消息控两路：DO_SET_ACTUATOR 与 AUX 口是怎么被接管的 · 雷电鸟实习手记</title>
+<meta name="author" content="qikai-lab">
+<link rel="canonical" href="https://qikai-lab.github.io/posts/leidianniao-02-mavlink-actuator.html">
+<meta property="og:type" content="article">
+<meta property="og:site_name" content="雷电鸟实习手记">
+<meta property="og:url" content="https://qikai-lab.github.io/posts/leidianniao-02-mavlink-actuator.html">
+<meta name="description" content="MAV_CMD_DO_SET_ACTUATOR 的六个参数怎么对应六路输出、NaN 是什么语义、PWM_AUX_FUNC 那几个数字分别代表什么，以及 PX4 1.16 废弃 REQUEST_DATA_STREAM 之后遥控器通道为什么读不到。">
+<link rel="stylesheet" href="../assets/css/style.css">
+</head>
+<body>
+
+<header class="site-header">
+  <nav class="nav">
+    <a class="brand" href="../index.html">
+      <span class="brand-mark">QL</span>
+      <span>qikai-lab</span>
+    </a>
+    <div class="nav-links">
+      <a href="../index.html">首页</a>
+      <a href="../projects/">项目</a>
+      <a href="../posts/" class="active">手记</a>
+      <a href="../index.html#about">关于</a>
+    </div>
+  </nav>
+</header>
+
+<main class="wrap">
+
+  <div class="post-header">
+    <div class="breadcrumb"><a href="../index.html">首页</a> / <a href="../posts/">手记</a> / 雷电鸟实习</div>
+    <h1>一条消息控两路：<code>DO_SET_ACTUATOR</code> 与 AUX 口是怎么被接管的</h1>
+    <div class="post-meta">
+      <span>2026-11-13</span>
+      <span class="dot">·</span>
+      <span class="tag">MAVLink</span>
+      <span class="tag">DO_SET_ACTUATOR</span>
+      <span class="tag">PWM_AUX_FUNC</span>
+      <span class="tag">PX4 1.16</span>
+      <span class="tag done">示波器已验证</span>
+    </div>
+  </div>
+
+  <article class="prose">
+
+  <p>
+    结构定下来之后，剩下的是"怎么把一句话说清楚"。
+    这一篇全在协议层：一条消息怎么同时改两路的输出、
+    那几个看起来像魔法数字的枚举值分别是什么、
+    以及一个让我以为"遥控器坏了"的接口变更。
+  </p>
+
+  <h2 id="enum">一、先弄清这几组数字</h2>
+
+  <p>
+    PX4 里 AUX 口的功能是靠 <code>PWM_AUX_FUNC1</code> … <code>PWM_AUX_FUNC9</code>
+    这组参数指定的，每个口一个，值是枚举。和这次任务有关的只有三个：
+  </p>
+
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr><th>值</th><th>含义</th><th>什么时候用</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><code>0</code></td>
+          <td>Disabled</td>
+          <td>空闲。配了 <code>RC AUX n</code> 但没接通道的那种"死口"，实际等价于这个</td>
+        </tr>
+        <tr>
+          <td><code>409</code></td>
+          <td>RC AUX n（遥控器直通）</td>
+          <td>出厂默认。摇杆 → 飞控 → 该口，板子插不上手</td>
+        </tr>
+        <tr>
+          <td><code>302</code> / <code>303</code></td>
+          <td>Offboard Actuator Set <strong>2</strong> / Set <strong>3</strong></td>
+          <td>把该口交给"外部指令通道"，板子发 <code>DO_SET_ACTUATOR</code> 才能控制它</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <p>
+    这里有个容易看错的地方：<strong>数字的后两位和 Set 编号是错位的。</strong>
+    <code>302</code> 是 Set <strong>2</strong>，<code>303</code> 是 Set <strong>3</strong>，
+    那 <code>301</code> 是 Set 1——不是 Set 3。
+    我盯着 QGC 那个下拉菜单看了半天才确认，因为菜单里写的是
+    "Peripheral via Actuator Set 2"，而数值列显示 302，
+    两个数字长得太像，很容易选错一行。
+  </p>
+
+  <div class="callout warn">
+    <div class="callout-icon">!</div>
+    <div class="callout-body">
+      <strong>改完必须重启飞控，而且只能靠重启。</strong>
+      <code>PWM_AUX_FUNC*</code> 只在飞控启动、初始化 PWM 输出通道的时候读一次。
+      在 QGC 里点保存，参数确实写进 flash 了，但对已经在跑的定时器<strong>没有任何影响</strong>。
+      这点很坑：<strong>参数页显示新值、界面看起来"已生效"、实际输出还是老逻辑。</strong>
+      判断方法只有一个——重启后重新读一遍，或者看 <code>probe</code> 的输出。
+    </div>
+  </div>
+
+  <h2 id="msg">二、一条消息，六个槽位</h2>
+
+  <p>
+    <code>MAV_CMD_DO_SET_ACTUATOR</code>（命令号 <code>187</code>）的结构很朴素：
+    七个参数，前六个是六路输出的目标值，第七个是"这次改哪一组"。
+  </p>
+
+  <pre>COMMAND_LONG
+  command = 187  (MAV_CMD_DO_SET_ACTUATOR)
+  param1 = 输出 1 的归一化值   → Set1
+  param2 = 输出 2 的归一化值   → Set2
+  param3 = 输出 3 的归一化值   → Set3
+  param4 = 输出 4 的归一化值   → Set4
+  param5 = 输出 5 的归一化值   → Set5
+  param6 = 输出 6 的归一化值   → Set6
+  param7 = 索引（0 = 全部）</pre>
+
+  <p>
+    关键是值的类型：<strong>归一化的浮点数，不是脉宽。</strong>
+    约定是 <code>-1.0</code> 对应该口的 MIN、<code>0.0</code> 对应中点、
+    <code>+1.0</code> 对应 MAX。所以真正发出去的是"比例",
+    具体变成多少微秒由飞控按该口的 MIN/TRIM/MAX 去换算：
+  </p>
+
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr><th>想让它</th><th>发什么</th><th>AUX3（1000/1300/1600）实际输出</th><th>AUX2（1000/1500/2000）实际输出</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>最低</td><td><code>-1.0</code></td><td>1000us</td><td>1000us</td></tr>
+        <tr><td>中点</td><td><code>0.0</code></td><td>1300us</td><td>1500us</td></tr>
+        <tr><td>最高</td><td><code>+1.0</code></td><td>1600us</td><td>2000us</td></tr>
+        <tr><td>中间某值</td><td>按比例插值</td><td>线性对应</td><td>线性对应</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <p>
+    注意两个口的"中点"不是一个数：<strong>AUX3 的中点是 1300，AUX2 的中点是 1500。</strong>
+    因为风扇那一路当初按 1000–1600 配的（行程只要 600us 就够吹），
+    伸缩杆那一路是标准舵机范围 1000–2000。
+    同一个 <code>0.0</code> 在两个口上输出不同微秒——<strong>归一化是相对于各自的 MIN/MAX 的</strong>，
+    这点如果没想清楚，调一路的时候会把另一路带歪。
+  </p>
+
+  <div class="callout info">
+    <div class="callout-icon">i</div>
+    <div class="callout-body">
+      <strong><code>NaN</code> 表示"这一路别动"。</strong>
+      六个槽位里，填 <code>NaN</code> 的那个输出保持上一次的值不变。
+      这条语义是整个方案能"一条消息控两路"的基础：
+      我用同一个循环同时算两路的目标，一路填风机、一路填杆，
+      中间没有"先改这个再改那个"的时间差。
+      <strong>两路永远在同一个时钟拍上变化，不会出现风扇已经加速、杆还停在老位置的错拍。</strong>
+    </div>
+  </div>
+
+  <h2 id="quant">三、把连续值压成三档，是在客户端做的</h2>
+
+  <p>
+    风扇是连续量，直接算归一化就行。杆不是。
+    杆的驱动器只认三个脉宽，而遥控器给的是连续行程
+    （实测 CH6 是 1050 → 1500 → 1950，中间还有抖动）。
+  </p>
+
+  <p>
+    飞控<strong>不做</strong>这个量化——它只会老老实实按比例插值。
+    所以 1130us 会被它算成一个"介于低档和中位之间"的输出，
+    而驱动器收到这个值之后的行为，是它自己的事，不是你的事。
+  </p>
+
+  <p>
+    量化必须放在发之前。实测区间这么定：以 1500 为中心，±200us 判为"中位"，
+    超出就判到两端：
+  </p>
+
+  <pre>rod_out = 1000.0 if rod_pwm &lt; 1500 - 200 else \
+          (2000.0 if rod_pwm &gt; 1500 + 200 else 1500.0)</pre>
+
+  <p>
+    这个 ±200 叫死区。它的作用不是"容错"，是<strong>让中位真的能停住</strong>——
+    遥控器松手回中时，机械回弹不一定精确落在 1500，
+    实测经常是 1492、1508 这种。没有死区的话，杆会在"低档"和"中位"之间来回跳，
+    表现出来就是<strong>松手后杆子还在抽动</strong>。
+  </p>
+
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr><th>遥控器 CH6 实测</th><th>判定</th><th>下发给 Set2</th><th>驱动器收到</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>1050</td><td>低档（&lt; 1300）</td><td><code>-1.0</code></td><td>1000us</td></tr>
+        <tr><td>1300 – 1700</td><td><strong>中位（停）</strong></td><td><code>0.0</code></td><td>1500us</td></tr>
+        <tr><td>1950</td><td>高档（&gt; 1700）</td><td><code>+1.0</code></td><td>2000us</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <p>
+    实测 1050 和 1950 都不是"标准值"，但它们离边界很远，量化后落在正确的档位上。
+    <strong>这就是量化的好处：输入不精确，输出精确。</strong>
+  </p>
+
+  <h2 id="stream">四、那个让遥控器"推不动"的坑</h2>
+
+  <p>
+    做到一半的时候出现过一个很怪的现象：板子上能看到飞控的状态（<code>mode=LOITER</code> 之类），
+    但<strong>读不到任何一个遥控器通道的值</strong>。遥控器明明是通的，QGC 里摇杆也在动。
+  </p>
+
+  <p>
+    原因是一行看起来很正常的初始化代码：
+  </p>
+
+  <pre>master.mav.request_data_stream_send(
+    master.target_system, master.target_component,
+    mavutil.mavlink.MAV_DATA_STREAM_RC_CHANNELS, 10, 1)</pre>
+
+  <p>
+    这个接口是 MAVLink 1 时代的东西，<strong>PX4 1.16 已经不再响应它了。</strong>
+    请求发出去不报错、不返回失败，就是<strong>什么都不会发生</strong>——
+    于是 <code>RC_CHANNELS</code> 一帧都不来。
+  </p>
+
+  <p>
+    正确的做法是改成按消息 ID 订阅，并且<strong>定期重发</strong>：
+  </p>
+
+  <pre>master.mav.command_long_send(
+    master.target_system, master.target_component,
+    mavutil.mavlink.MAV_CMD_SET_MESSAGE_INTERVAL, 0,
+    mavutil.mavlink.MAVLINK_MSG_ID_RC_CHANNELS,
+    100000,   # 100000us = 10Hz
+    0, 0, 0, 0, 0)</pre>
+
+  <p>
+    这里有两个细节，都不是可选的：
+  </p>
+
+  <ul>
+    <li>
+      <strong>要定期重发。</strong>
+      飞控重启、链路重连、或者内部状态刷新，都可能把这个订阅清掉。
+      我的做法是每 3 秒重发一次，另外加了个 8 秒没收到就打印告警的看守。
+    </li>
+    <li>
+      <strong>单位是微秒，不是赫兹。</strong>
+      <code>100000</code> 是"每 100ms 一帧"，也就是 10Hz。
+      填 <code>10</code> 会被理解成"每 10 微秒一帧"，飞控要么忽略要么按上限截断，
+      反正不是你想要的频率。
+    </li>
+  </ul>
+
+  <div class="callout danger">
+    <div class="callout-icon">!</div>
+    <div class="callout-body">
+      <strong>这是这套东西里最贵的一类坑：接口还在、调用不报错、效果为零。</strong>
+      如果当时的判断是"遥控器没连上"，就会去查接收机、查对频、查 SBUS 线序——
+      全都不会有结果，因为信号一直都在，只是<strong>没人去取</strong>。
+      后来我在这个脚本里加了一条固定规则：<strong>凡是"应该有数据但没有"，
+      先确认订阅，再确认硬件。</strong>
+    </div>
+  </div>
+
+  <h2 id="socket">五、端口只能被一个人占用</h2>
+
+  <p>
+    还有一个和协议无关、但一定会撞上的问题：
+  </p>
+
+  <pre>[连接] udpin:0.0.0.0:14540</pre>
+
+  <p>
+    <code>udpin</code> 意味着<strong>这个进程在本地 14540 上开了监听</strong>。
+    一个 UDP 端口只能被一个进程绑定，所以：
+  </p>
+
+  <ul>
+    <li>服务在跑的时候，手动再起一个实例 → 直接绑定失败；</li>
+    <li>手动实例在跑的时候，<code>systemctl start</code> → 服务起来了但连不上飞控，报"收不到心跳"。</li>
+  </ul>
+
+  <p>
+    这个约束逼出了后面的两个设计：<strong>双路必须写在同一个进程里</strong>（不能一个脚本管风扇、一个管杆），
+    以及<strong>没有终端的时候怎么下指令</strong>——那是第四篇的内容。
+  </p>
+
+  <p>
+    另外飞控在以太网上<strong>不主动往板子广播</strong>心跳。光监听是等不到的，
+    必须预设对端地址、自己先往那边发心跳，把链路"叫醒"：
+  </p>
+
+  <pre>[连接] 预设对端 10.41.10.2:14540，主动发心跳（绕开飞控广播失败）
+[连接] 已连上 sysid=1 compid=0</pre>
+
+  <p>
+    这里的 <code>10.41.10.2</code> 是飞控在内部网段上的地址，
+    和板子 wlan0 的 <code>192.168.110.180</code> 不是一个网段——
+    <strong>前者是 eth0 直连飞控的口，后者才是你 SSH 上来的口。</strong>
+    这两个地址我混过一次，代价是十几分钟的 scp 超时排查。
+  </p>
+
+  <h2 id="sanity">六、两路一起动，怎么确认没互相踩</h2>
+
+  <figure>
+    <img src="../assets/img/fan-closeup.jpg" alt="特写：两个红色涵道风机固定在黑色安装板上，金色轮毂，前方有竖直的金属杆，下方是白色挡板">
+    <figcaption>
+      风机特写。两个红色涵道风机固定在黑色基板上，朝下吹；板前那两根竖直的金属件就是伸缩机构的导向部分。
+      <strong>这两个东西挂在同一块板上，意味着杆一动，风机的离板距离就变——两路在物理上是耦合的</strong>
+    </figcaption>
+  </figure>
+
+  <p>
+    双路同时下发之后，我盯的是这样一种日志：
+  </p>
+
+  <pre>[AUTO] CH11=1050us -&gt; 输出 1000us  自治 1000us  (板子设定中…)  27.0s  |  CH6=1950us -&gt; 伸缩杆 1500us [高档]  🔒超时保护中</pre>
+
+  <p>
+    这一行里同时有三层信息，正好可以用来验收：
+  </p>
+
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr><th>看哪一段</th><th>说明什么</th><th>不正常的样子</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><code>CH11=1050 → 1000us</code></td>
+          <td>风扇这一路仍在正常读遥控器、正常输出</td>
+          <td>风扇输出跟着杆的档位变化 → 两路串了</td>
+        </tr>
+        <tr>
+          <td><code>CH6=1950 → [高档]</code></td>
+          <td>杆这一路读到了正确的档位</td>
+          <td>档位判定在中位和低档之间乱跳 → 死区太小</td>
+        </tr>
+        <tr>
+          <td><code>伸缩杆 1500us</code> + <code>🔒</code></td>
+          <td><strong>读到了高档，但输出被压回中位</strong>——保护优先级高于摇杆</td>
+          <td>读高档就输出 2000us → 保护没生效，杆会一直顶着限位</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <p>
+    第三行值得停一下：<strong>日志里"输入"和"输出"是分开显示的，这是故意的。</strong>
+    如果只打最终输出，就看不出"是谁把它改成这样的"——
+    是摇杆让它回中，还是保护让它回中？这两种情况在排障时结论完全相反。
+  </p>
+
+  <div class="callout success">
+    <div class="callout-icon">✓</div>
+    <div class="callout-body">
+      <strong>一行日志里同时给出"读到什么、判成什么、发出去什么"，是这套代码里最值得的一个设计。</strong>
+      它让"保护有没有生效"这件事变成肉眼可读的，
+      不需要去翻代码确认逻辑顺序。<strong>可观测性不是加日志量，是让一行日志能独立回答问题。</strong>
+    </div>
+  </div>
+
+  <h2 id="recap">七、这一层的四条结论</h2>
+
+  <ol>
+    <li>
+      <strong>归一化不是脉宽。</strong> 同一个 <code>0.0</code> 在不同口上输出不同微秒，
+      因为它是相对于各自 MIN/MAX 的比例。
+    </li>
+    <li>
+      <strong><code>NaN</code> 是"别动这一路"。</strong> 这是能一条消息控多路的前提，
+      也是让两路永远同拍的手段。
+    </li>
+    <li>
+      <strong>量化要在客户端做。</strong> 飞控只会插值，它不知道你的驱动器只认三个值。
+    </li>
+    <li>
+      <strong>订阅式接口要重发，单位是微秒。</strong> 调用不报错不代表有数据。
+    </li>
+  </ol>
+
+  <p>
+    协议这一层通了，接下来是真正麻烦的部分：<strong>当遥控器和板子同时想控的时候，听谁的。</strong>
+    这一块我前后推翻过三次，下一篇写它。
+  </p>
+
+  <div class="post-footer">
+    <a class="btn" href="leidianniao-01-architecture.html">← 上一篇：为什么是飞控说了算</a>
+    <a class="btn btn-primary" href="leidianniao-03-arbiter.html">下一篇：谁说了算 →</a>
+  </div>
+
+  </article>
+
+</main>
+
+<footer class="site-footer">
+  <div class="wrap-wide">
+    <span>qikai-lab · 雷电鸟实习手记</span>
+    <span>最近更新：2026-11-13</span>
+  </div>
+</footer>
+
+</body>
+</html>
