@@ -1,0 +1,707 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>雷电鸟：100 kg 级光伏清洗无人机 · qikai-lab</title>
+<meta name="author" content="qikai-lab">
+<link rel="canonical" href="https://qikai-lab.github.io/projects/leidianniao-drone.html">
+<meta property="og:type" content="article">
+<meta property="og:site_name" content="qikai-lab">
+<meta property="og:url" content="https://qikai-lab.github.io/projects/leidianniao-drone.html">
+<meta name="description" content="新疆光伏电站干式清洁无人机：两台涵道风机贴板吹扫，飞控做唯一 PWM 输出者，RK3588 经以太网下发执行器指令，遥控器随时夺权。含通道分配、控制语义、示波器实测、上机验收与部署清单。">
+<link rel="stylesheet" href="../assets/css/style.css">
+</head>
+<body>
+
+<header class="site-header">
+  <nav class="nav">
+    <a class="brand" href="../index.html">
+      <span class="brand-mark">QL</span>
+      <span>qikai-lab</span>
+    </a>
+    <div class="nav-links">
+      <a href="../index.html">首页</a>
+      <a href="index.html" class="active">项目</a>
+      <a href="../posts/">手记</a>
+      <a href="../index.html#about">关于</a>
+    </div>
+  </nav>
+</header>
+
+<main>
+
+  <!-- ==================== 页头 ==================== -->
+  <section class="page-head">
+    <div class="wrap-wide">
+      <a class="crumb" href="index.html">← 全部项目</a>
+      <h1>雷电鸟：100 kg 级光伏清洗无人机</h1>
+      <p>
+        给新疆的光伏电站做清洁。当地缺水、不能水洗，板面积灰又直接掉发电量，
+        所以改成挂着两台涵道风机贴着板面吹。整机 100 kg 级，
+        飞控做<strong>唯一的 PWM 输出者</strong>，机载 RK3588 只负责发执行器指令，
+        遥控器永远是最高优先级。
+      </p>
+      <div class="post-card-top" style="margin-top:16px">
+        <span class="tag done">地面联调通过 · 2026-11-13</span>
+        <span class="tag">未飞</span>
+        <span class="tag">无人机</span>
+        <span class="tag">PX4</span>
+        <span class="tag">MAVLink</span>
+        <span class="tag">RK3588</span>
+      </div>
+    </div>
+  </section>
+
+  <div class="wrap-wide">
+
+    <!-- ==================== 概览数字 ==================== -->
+    <div class="spec-grid" style="margin-top:34px">
+      <div class="spec">
+        <div class="spec-num">100<span style="font-size:15px"> kg</span></div>
+        <div class="spec-label">整机重量级</div>
+      </div>
+      <div class="spec">
+        <div class="spec-num">2</div>
+        <div class="spec-label">路执行器（杆 + 风机）</div>
+      </div>
+      <div class="spec">
+        <div class="spec-num">20.00<span style="font-size:15px"> ms</span></div>
+        <div class="spec-label">PWM 周期（示波器实测）</div>
+      </div>
+      <div class="spec">
+        <div class="spec-num">3</div>
+        <div class="spec-label">伸缩杆档位 1000/1500/2000</div>
+      </div>
+      <div class="spec">
+        <div class="spec-num">5</div>
+        <div class="spec-label">篇开发手记</div>
+      </div>
+    </div>
+
+    <!-- ==================== 一、它是什么 ==================== -->
+    <div class="section-head">
+      <h2>一、它是什么</h2>
+      <span>为什么要用吹的</span>
+    </div>
+
+    <p style="font-size:15px;color:var(--text-strong);max-width:760px;margin:0 0 18px">
+      光伏板的发电量对积灰非常敏感，而新疆的光伏电站普遍缺水——水洗这条路走不通，
+      人工干擦又不现实（板阵面积太大，且要频繁做）。这台机器的思路是：
+      <strong>飞起来，把两台大功率涵道风机吊到离板面很近的位置，靠气流把灰吹走。</strong>
+    </p>
+
+    <figure>
+      <img src="../assets/img/drone-side.jpg" alt="雷电鸟无人机侧面，机臂下方通过可上下伸缩的连接杆挂载涵道风机组件" loading="lazy">
+      <figcaption>
+        侧后上方近景。右侧那两根水平伸出的碳管，末端各挂一台<strong>红色涵道风机</strong>——一共两台。
+        整组挂架可以上下伸缩：作业时伸下去贴近板面，转场时收上来。
+        这台整机目前仍吊在吊绳上，<strong>还没有飞过</strong>。
+      </figcaption>
+    </figure>
+
+    <div class="table-wrap" style="margin-top:6px">
+      <table>
+        <thead>
+          <tr>
+            <th>部分</th>
+            <th>是什么</th>
+            <th>在这套控制里扮演什么</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><strong>飞控</strong></td>
+            <td>Pixhawk V6X（fmu-v6x）</td>
+            <td><strong>唯一的 PWM 输出者</strong>。所有执行器动作最终都由它变成电信号</td>
+          </tr>
+          <tr>
+            <td><strong>机载电脑</strong></td>
+            <td>RK3588 / Ubuntu 22.04</td>
+            <td>跑仲裁进程，经以太网发 <code>DO_SET_ACTUATOR</code>；不做任何 PWM 输出</td>
+          </tr>
+          <tr>
+            <td><strong>清洗执行器</strong></td>
+            <td>两台涵道风机（挂架下方）</td>
+            <td>接飞控 <code>AUX3</code>，转速可调，有软件限速</td>
+          </tr>
+          <tr>
+            <td><strong>升降机构</strong></td>
+            <td>可伸缩挂架 + 驱动器</td>
+            <td>接飞控 <code>AUX2</code>，驱动器只认三个值：<strong>1000 / 1500 / 2000</strong></td>
+          </tr>
+          <tr>
+            <td><strong>遥控器</strong></td>
+            <td>2.4 GHz，CH6 三档开关 + CH11 比例通道</td>
+            <td>最高优先级。随时可以夺走控制权</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <!-- ==================== 二、控制链路 ==================== -->
+    <div class="section-head">
+      <h2>二、控制链路</h2>
+      <span>为什么不让板子直接驱动</span>
+    </div>
+
+    <div class="diagram-box">
+      <svg viewBox="0 0 680 400" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="控制链路框图：遥控器与 RK3588 都连到 PX4 飞控，飞控通过 AUX2 驱动伸缩杆、AUX3 驱动涵道风机">
+        <defs>
+          <marker id="a2" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto">
+            <path d="M0,0 L0,6 L7,3 z" fill="#475569"/>
+          </marker>
+          <marker id="a2t" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto">
+            <path d="M0,0 L0,6 L7,3 z" fill="#0d9488"/>
+          </marker>
+        </defs>
+
+        <!-- 遥控器 -->
+        <rect x="6" y="24" width="128" height="76" rx="10" fill="#f8fafc" stroke="#cbd5e1"/>
+        <text x="70" y="50" font-size="12.5" font-weight="700" fill="#0f172a" text-anchor="middle" font-family="system-ui">遥控器</text>
+        <text x="70" y="70" font-size="11" fill="#475569" text-anchor="middle" font-family="system-ui">CH6 → 杆（三档）</text>
+        <text x="70" y="88" font-size="11" fill="#475569" text-anchor="middle" font-family="system-ui">CH11 → 风机</text>
+
+        <!-- 遥控器 -> 飞控 -->
+        <line x1="134" y1="62" x2="190" y2="62" stroke="#475569" stroke-width="1.6" marker-end="url(#a2)"/>
+        <text x="138" y="52" font-size="9.5" fill="#64748b" font-family="system-ui">2.4 GHz</text>
+
+        <!-- 飞控 -->
+        <rect x="196" y="24" width="252" height="168" rx="10" fill="#ecfdf5" stroke="#5eead4"/>
+        <text x="214" y="50" font-size="13" font-weight="700" fill="#0f766e" font-family="system-ui">PX4 飞控 · Pixhawk V6X</text>
+        <text x="214" y="76" font-size="11.5" fill="#134e4a" font-family="system-ui">唯一的 PWM 输出者 · 50 Hz / 20 ms</text>
+        <line x1="214" y1="86" x2="430" y2="86" stroke="#99f6e4" stroke-width="1"/>
+        <text x="214" y="108" font-size="11" fill="#334155" font-family="system-ui">AUX2 = Set2 → 伸缩杆</text>
+        <text x="214" y="130" font-size="11" fill="#334155" font-family="system-ui">AUX3 = Set3 → 涵道风机</text>
+        <text x="214" y="156" font-size="11" fill="#334155" font-family="system-ui">上电即预解锁（非油门执行器随时可动）</text>
+        <text x="214" y="178" font-size="10.5" fill="#64748b" font-family="system-ui">任何指令最终都在这一层变成脉宽</text>
+
+        <!-- 飞控 -> 执行器 -->
+        <line x1="448" y1="60" x2="492" y2="60" stroke="#0d9488" stroke-width="1.8" marker-end="url(#a2t)"/>
+        <text x="452" y="50" font-size="9.5" fill="#0f766e" font-family="system-ui">AUX2</text>
+        <line x1="448" y1="148" x2="492" y2="148" stroke="#0d9488" stroke-width="1.8" marker-end="url(#a2t)"/>
+        <text x="452" y="138" font-size="9.5" fill="#0f766e" font-family="system-ui">AUX3</text>
+
+        <!-- 执行器：伸缩杆 -->
+        <rect x="498" y="24" width="176" height="72" rx="10" fill="#fffbeb" stroke="#fde68a"/>
+        <text x="514" y="46" font-size="12" font-weight="700" fill="#78350f" font-family="system-ui">伸缩杆驱动器</text>
+        <text x="514" y="66" font-size="11" fill="#92400e" font-family="system-ui">只认 1000 / 1500 / 2000</text>
+        <text x="514" y="84" font-size="10.5" fill="#a16207" font-family="system-ui">中间值不线性，必须量化</text>
+
+        <!-- 执行器：风机 -->
+        <rect x="498" y="112" width="176" height="72" rx="10" fill="#eff6ff" stroke="#bfdbfe"/>
+        <text x="514" y="134" font-size="12" font-weight="700" fill="#1e3a8a" font-family="system-ui">涵道风机 ×2</text>
+        <text x="514" y="154" font-size="11" fill="#1d4ed8" font-family="system-ui">1000–1600，限速 1400</text>
+        <text x="514" y="172" font-size="10.5" fill="#3b82f6" font-family="system-ui">比例可调，不需要量化</text>
+
+        <!-- RK3588 -->
+        <rect x="196" y="248" width="252" height="98" rx="10" fill="#f8fafc" stroke="#94a3b8"/>
+        <text x="214" y="274" font-size="12.5" font-weight="700" fill="#0f172a" font-family="system-ui">RK3588 · Ubuntu 22.04</text>
+        <text x="214" y="296" font-size="10.5" fill="#334155" font-family="ui-monospace,monospace">px4_actuator_client.py arbiter</text>
+        <text x="214" y="316" font-size="11" fill="#475569" font-family="system-ui">仲裁 · 三档量化 · 超时保护 · 限速</text>
+        <text x="214" y="334" font-size="11" fill="#475569" font-family="system-ui">systemd 开机自启，断电重启不用管</text>
+
+        <!-- RK3588 -> 飞控 -->
+        <line x1="322" y1="248" x2="322" y2="198" stroke="#0d9488" stroke-width="1.8" marker-end="url(#a2t)"/>
+        <text x="332" y="218" font-size="10.5" fill="#0f766e" font-family="system-ui">以太网 UDP 14540</text>
+        <text x="332" y="233" font-size="10.5" fill="#0f766e" font-family="ui-monospace,monospace">DO_SET_ACTUATOR</text>
+
+        <!-- 底部说明 -->
+        <line x1="0" y1="360" x2="680" y2="360" stroke="#e2e8f0" stroke-width="1"/>
+        <text x="0" y="380" font-size="10.5" fill="#64748b" font-family="system-ui">遥控器一动立刻夺权，并作废板子此前那条方向指令；松手 → 停在原地，不恢复旧动作</text>
+      </svg>
+    </div>
+
+    <div class="table-wrap" style="margin-top:20px">
+      <table>
+      <thead>
+        <tr>
+          <th>方案</th>
+          <th>做法</th>
+          <th>为什么没选 / 选了</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><strong>A</strong></td>
+          <td>板子直接驱动电调 / 继电器，绕开飞控</td>
+          <td>板子崩了没有任何兜底，且拿不到飞控的失效逻辑</td>
+        </tr>
+        <tr>
+          <td><strong>B</strong></td>
+          <td>遥控器直通 AUX 口，板子只做监听</td>
+          <td>板子没法控制，三档量的自动化无从谈起</td>
+        </tr>
+        <tr>
+          <td><strong>C</strong> ✅</td>
+          <td>飞控做唯一 PWM 输出者，板子只发执行器指令</td>
+          <td>
+            <strong>选它。</strong>不是因为代码少，是因为它自带一整套失效语义：
+            断链默认值、上电预解锁、信号丢失归零、遥控器优先级——
+            这些都不需要我自己实现，而且已经被无数架飞机验证过
+          </td>
+        </tr>
+      </tbody>
+    </table>
+    </div>
+
+    <!-- ==================== 三、通道分配 ==================== -->
+    <div class="section-head">
+      <h2>三、通道分配</h2>
+      <span>两个执行器，两组参数</span>
+    </div>
+
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>输出口</th>
+            <th><code>PWM_AUX_FUNC</code></th>
+            <th>功能</th>
+            <th>MIN / 中位 / MAX</th>
+            <th>遥控器映射</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><strong>AUX2</strong></td>
+            <td><code>302</code></td>
+            <td>Offboard Actuator Set 2 · 伸缩杆</td>
+            <td>1000 / 1500 / 2000</td>
+            <td><code>RC_MAP_AUX2</code> = CH6（三档开关）</td>
+          </tr>
+          <tr>
+            <td><strong>AUX3</strong></td>
+            <td><code>303</code></td>
+            <td>Offboard Actuator Set 3 · 涵道风机</td>
+            <td>1000 / 1300 / 1600</td>
+            <td><code>RC_MAP_AUX3</code> = CH11（比例通道）</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <p style="font-size:14.5px;color:var(--text-soft);max-width:760px;margin:16px 0 18px">
+      <code>302</code> 和 <code>303</code> 差一个数字就是另一个执行器——选错了，界面上都显示"已配置"，
+      但板子发下去的指令会落在没人听的通道上。所以确认只认 <code>probe</code> 读出来的飞行器内部状态：
+    </p>
+
+    <pre>--- AUX  (FMU A1-An) ---
+口   功能                           MIN     中点   MAX    失能值
+2   Offboard Actuator Set 2     1000   1500  2000   1000
+3   Offboard Actuator Set 3     1000   1300  1600   1040
+6   RC AUX 6                    1000   1500  2000   1000
+
+已配 Offboard Actuator: AUX2=Set2, AUX3=Set3</pre>
+
+    <p style="font-size:14.5px;color:var(--text-soft);max-width:760px;margin:16px 0 0">
+      另一个必须记住的点：<code>PWM_AUX_FUNC*</code> 这类参数<strong>只在飞控启动初始化 PWM 输出时读一次</strong>。
+      改完不重启，界面显示已保存，实际还是旧的行为。
+    </p>
+
+    <!-- ==================== 四、控制语义 ==================== -->
+    <div class="section-head">
+      <h2>四、控制语义</h2>
+      <span>五条，每条都能一句话说完</span>
+    </div>
+
+    <p style="font-size:14.5px;color:var(--text-soft);max-width:760px;margin:0 0 18px">
+      这五条是这个项目里唯一被推翻过三次的部分，也是唯一"必须能被一句话讲清"的部分。
+      现在的版本没有任何模式参数——<strong>因为需要使用者理解内部状态才能正确设置的开关，本身就是缺陷</strong>。
+    </p>
+
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>规则</th>
+            <th>具体行为</th>
+            <th>为什么是这样</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><strong>遥控器最高优先</strong></td>
+            <td>CH11 / CH6 一动，立刻抢走控制权</td>
+            <td>人在现场看得见实物，人必须能盖过程序</td>
+          </tr>
+          <tr>
+            <td><strong>夺权即作废</strong></td>
+            <td>遥控器离开中位那一刻，板子此前那条指令<strong>清零</strong></td>
+            <td>只做"这一拍听我的"，松手后旧指令会复活——最危险的一类行为</td>
+          </tr>
+          <tr>
+            <td><strong>松手即停</strong></td>
+            <td>回中位 → 停在原地，不回键盘上一次设的值</td>
+            <td>弹簧杆上回弹就是"我要停"，不该有第三种解读</td>
+          </tr>
+          <tr>
+            <td><strong>超时防堵转</strong></td>
+            <td>同方向连续运行超过阈值 → 强制回中位，需回中位才解锁</td>
+            <td>机械限位挡得住位置，挡不住电流。顶死时电机仍在通电发热</td>
+          </tr>
+          <tr>
+            <td><strong>限速最后截</strong></td>
+            <td>上限 1400 us，对遥控器和键盘<strong>两条通道同时生效</strong></td>
+            <td>限速如果只在某一条路上做，另一条路就是绕过它的后门</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <!-- ==================== 五、实测数据 ==================== -->
+    <div class="section-head">
+      <h2>五、实测数据</h2>
+      <span>示波器夹在输出口上量的</span>
+    </div>
+
+    <p style="font-size:14.5px;color:var(--text-soft);max-width:760px;margin:0 0 18px">
+      所有"指令是否正确"的讨论，最后都必须落到一根线上有没有对的电平。
+      三张截图是同一次测量里三个不同的指令值——看的是<strong>周期没变、高电平宽度在变</strong>：
+      这正好证明改的是脉宽，不是频率。
+    </p>
+
+    <div class="table-wrap">
+      <table>
+      <thead>
+        <tr>
+          <th>指令</th>
+          <th>示波器读数</th>
+          <th>换算</th>
+          <th>结论</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>6.000 %</td>
+          <td>20.00 ms 周期 / 1.200 ms 高电平</td>
+          <td>20 ms × 6% = <strong>1200 us</strong></td>
+          <td>低转速</td>
+        </tr>
+        <tr>
+          <td>7.500 %</td>
+          <td>20.00 ms 周期 / 1.500 ms 高电平</td>
+          <td>20 ms × 7.5% = <strong>1500 us</strong></td>
+          <td>中点</td>
+        </tr>
+        <tr>
+          <td>10.00 %</td>
+          <td>20.00 ms 周期 / 2.000 ms 高电平</td>
+          <td>20 ms × 10% = <strong>2000 us</strong></td>
+          <td>满量程</td>
+        </tr>
+      </tbody>
+    </table>
+    </div>
+
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:14px;margin-top:20px">
+      <figure style="margin:0">
+        <img src="../assets/img/osc-duty-6pct.jpg" alt="示波器截图：占空比 6.000%，周期 20ms，高电平 1.2ms" loading="lazy">
+        <figcaption>6.000 % → 1200 us</figcaption>
+      </figure>
+      <figure style="margin:0">
+        <img src="../assets/img/osc-duty-7p5pct.jpg" alt="示波器截图：占空比 7.500%，周期 20ms，高电平 1.5ms" loading="lazy">
+        <figcaption>7.500 % → 1500 us</figcaption>
+      </figure>
+      <figure style="margin:0">
+        <img src="../assets/img/osc-duty-10pct.jpg" alt="示波器截图：占空比 10.00%，周期 20ms，高电平 2.0ms" loading="lazy">
+        <figcaption>10.00 % → 2000 us</figcaption>
+      </figure>
+    </div>
+
+    <h3 style="font-size:15.5px;font-weight:650;margin:28px 0 12px;color:var(--text-soft)">遥控器通道实测</h3>
+
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>通道</th>
+            <th>物理动作</th>
+            <th>实测值</th>
+            <th>行程</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><strong>CH11</strong></td>
+            <td>比例通道推到底再拉到底</td>
+            <td>1050 → 1950</td>
+            <td>900 us 连续可调</td>
+          </tr>
+          <tr>
+            <td><strong>CH6</strong></td>
+            <td>三档开关：上 / 中 / 下</td>
+            <td>1050 / 1500 / 1950</td>
+            <td>三个点，中间不线性</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <p style="font-size:14.5px;color:var(--text-soft);max-width:760px;margin:16px 0 0">
+      CH6 这三个值和驱动器认的 1000 / 1500 / 2000 对不上，所以必须做<strong>量化</strong>：
+      遥控器给什么都在中位 ±200 us 之外按方向取端点，中间一律当停。
+      不量化、直接透传，驱动器收到 1050 会当成"未知档位"，行为不可预期。
+    </p>
+
+    <!-- ==================== 六、上机验收 ==================== -->
+    <div class="section-head">
+      <h2>六、上机验收</h2>
+      <span>通过的和没通过的，都列出来</span>
+    </div>
+
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>项目</th>
+            <th>判据</th>
+            <th>结果</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>板子能控杆</td>
+            <td><code>rod up</code> / <code>rod down</code> 杆按方向动</td>
+            <td style="color:#059669;font-weight:600">✅ 通过</td>
+          </tr>
+          <tr>
+            <td>中位真能停</td>
+            <td>1500 us 时杆完全静止、无蠕动无嗡嗡声</td>
+            <td style="color:#059669;font-weight:600">✅ 通过</td>
+          </tr>
+          <tr>
+            <td>三档量化</td>
+            <td>CH6 给 1050/1950，实际下发 1000/2000</td>
+            <td style="color:#059669;font-weight:600">✅ 通过</td>
+          </tr>
+          <tr>
+            <td>遥控器夺权</td>
+            <td>拨杆立刻抢走控制权</td>
+            <td style="color:#059669;font-weight:600">✅ 通过</td>
+          </tr>
+          <tr>
+            <td>夺权后作废旧指令</td>
+            <td>遥控器回中后杆停住，不再接着走板子的旧方向</td>
+            <td style="color:#059669;font-weight:600">✅ 通过</td>
+          </tr>
+          <tr>
+            <td>超时保护</td>
+            <td>同方向连拨 15 s 打印保护、强制回中、锁定期间拨杆无效</td>
+            <td style="color:#059669;font-weight:600">✅ 通过</td>
+          </tr>
+          <tr>
+            <td>双路互不干扰</td>
+            <td>控杆时风机转速不受影响</td>
+            <td style="color:#059669;font-weight:600">✅ 通过</td>
+          </tr>
+          <tr>
+            <td>退出归零</td>
+            <td>Ctrl-C / <code>systemctl stop</code> 后风机停、杆回中位</td>
+            <td style="color:#059669;font-weight:600">✅ 通过</td>
+          </tr>
+          <tr>
+            <td>开机自启</td>
+            <td>断电重启不敲任何命令，服务自己起来接管双路</td>
+            <td style="color:#059669;font-weight:600">✅ 通过</td>
+          </tr>
+          <tr>
+            <td><strong>全行程秒数</strong></td>
+            <td>掐表量单程用时，用来定 <code>--rod-timeout</code></td>
+            <td style="color:#b45309;font-weight:600">⬜ 未测（暂按 12 s 估）</td>
+          </tr>
+          <tr>
+            <td><strong>飞行验证</strong></td>
+            <td>离地、振动、气流、供电波动下是否仍然稳定</td>
+            <td style="color:#b45309;font-weight:600">⬜ 未飞</td>
+          </tr>
+          <tr>
+            <td><strong>硬件兜底</strong></td>
+            <td>限位开关 + 继电器串杆电源，板子死机能自己断电</td>
+            <td style="color:#b45309;font-weight:600">⬜ 未装</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="callout warn" style="margin-top:20px">
+      <div class="callout-icon">!</div>
+      <div class="callout-body">
+        <strong>把 AUX2 交给板子的代价，必须写在这里：从此软件是唯一的刹车。</strong>
+        3588 死机、网线断开、进程崩溃，杆子会保持最后一个方向一直顶在机械限位上堵转，
+        直到有人手动断电。机械限位挡得住位置，挡不住电流。
+        限位开关 + 继电器的硬件兜底不是可选项——它是这一层设计的<strong>前提</strong>。
+      </div>
+    </div>
+
+    <!-- ==================== 七、板子上怎么控 ==================== -->
+    <div class="section-head">
+      <h2>七、板子上怎么控</h2>
+      <span>服务跑着就能用，不用停服务</span>
+    </div>
+
+    <p style="font-size:14.5px;color:var(--text-soft);max-width:760px;margin:0 0 16px">
+      原理是<strong>只往一个文件里写一行字</strong>：服务主循环每 50 ms 读一次、读完即删。
+      所以它不连飞控、不占 14500 端口，能和正在跑的服务天然共存。
+    </p>
+
+    <div class="table-wrap">
+      <table>
+      <thead>
+        <tr>
+          <th>想干什么</th>
+          <th>命令</th>
+          <th>实际下发</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr><td>杆向上</td><td><code>rod up</code></td><td>1000 us</td></tr>
+        <tr><td>杆向下</td><td><code>rod down</code></td><td>2000 us</td></tr>
+        <tr><td>杆停</td><td><code>rod stop</code></td><td>1500 us</td></tr>
+        <tr><td>杆给任意脉宽</td><td><code>rod 1600</code></td><td>裁剪到 1000–2000</td></tr>
+        <tr><td>风机 35%</td><td><code>fan 35</code></td><td>约 1210 us</td></tr>
+        <tr><td>风机停</td><td><code>fan stop</code></td><td>1000 us</td></tr>
+        <tr><td>临时改限速</td><td><code>fan cap 1200</code></td><td>立刻生效，重启服务后回到 1400</td></tr>
+        <tr><td>看状态和日志</td><td><code>rod status</code></td><td>—</td></tr>
+      </tbody>
+    </table>
+    </div>
+
+    <h3 style="font-size:15.5px;font-weight:650;margin:28px 0 12px;color:var(--text-soft)">部署组成</h3>
+
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr><th>文件</th><th>作用</th><th>装到哪</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><code>px4_actuator_client.py</code></td>
+            <td>主程序：MAVLink 连接、仲裁、量化、超时保护、文件通道</td>
+            <td><code>~/px4fan/</code></td>
+          </tr>
+          <tr>
+            <td><code>px4fan.service</code></td>
+            <td>开机自启 + 崩溃重启 + SIGTERM 转优雅退出</td>
+            <td><code>/etc/systemd/system/</code></td>
+          </tr>
+          <tr>
+            <td><code>px4fan.default</code></td>
+            <td><strong>参数文件</strong>：开机时脚本收到的全部参数都在这</td>
+            <td><code>/etc/default/px4fan</code></td>
+          </tr>
+          <tr>
+            <td><code>rod</code> / <code>fan</code></td>
+            <td>两个快捷命令，只往 <code>ctl</code> 文件写一行</td>
+            <td><code>/usr/local/bin/</code></td>
+          </tr>
+          <tr>
+            <td><code>install_px4fan.sh</code></td>
+            <td>一键装六个东西：日志目录、参数、服务、轮转、enable、启动</td>
+            <td>—</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <!-- ==================== 八、开发手记 ==================== -->
+    <div class="section-head" id="logs">
+      <h2>八、开发手记</h2>
+      <span>5 篇，按依赖顺序</span>
+    </div>
+
+    <p style="font-size:14.5px;color:var(--text-soft);max-width:720px;margin:0 0 18px">
+      这一组不是按时间随手记的，是<strong>按依赖顺序写的</strong>：结构 → 协议 → 语义 → 设备化 → 排障。
+      第 5 篇是前四篇的反面，写的全是中间错过的路。
+    </p>
+
+    <div class="log-list">
+
+      <a class="log-item" href="../posts/leidianniao-01-architecture.html">
+        <span class="log-when">01</span>
+        <span>
+          <span class="log-title">100 公斤的吹风机：为什么把 PWM 交给飞控</span>
+          <span class="log-desc">三种控制结构对比，三张示波器截图把「%」和「us」钉在一起。</span>
+        </span>
+        <span class="log-go">阅读 →</span>
+      </a>
+
+      <a class="log-item" href="../posts/leidianniao-02-mavlink-actuator.html">
+        <span class="log-when">02</span>
+        <span>
+          <span class="log-title">一条消息控两路：DO_SET_ACTUATOR 与那些不报错的坑</span>
+          <span class="log-desc"><code>NaN</code> 表示这一路不动；302 和 303 差一个数字就是另一个执行器。</span>
+        </span>
+        <span class="log-go">阅读 →</span>
+      </a>
+
+      <a class="log-item" href="../posts/leidianniao-03-arbiter.html">
+        <span class="log-when">03</span>
+        <span>
+          <span class="log-title">谁说了算：被推翻三次的仲裁设计</span>
+          <span class="log-desc">弹簧杆上「锁住当前速度」不可重复：快弹锁 1300，慢推锁 1081。</span>
+        </span>
+        <span class="log-go">阅读 →</span>
+      </a>
+
+      <a class="log-item" href="../posts/leidianniao-04-systemd.html">
+        <span class="log-when">04</span>
+        <span>
+          <span class="log-title">断电重启之后：把脚本变成设备的一部分</span>
+          <span class="log-desc">SIGTERM 会跳过 <code>finally</code>，电机不归零；8 个不报错的坑。</span>
+        </span>
+        <span class="log-go">阅读 →</span>
+      </a>
+
+      <a class="log-item" href="../posts/leidianniao-05-debug-log.html">
+        <span class="log-when">05</span>
+        <span>
+          <span class="log-title">它动了，但不是我要的动：一次上机的十三次误判</span>
+          <span class="log-desc">按四层拆开，两次是「因为修错方向而变得更糟」。</span>
+        </span>
+        <span class="log-go">阅读 →</span>
+      </a>
+
+    </div>
+
+    <p class="more-link">
+      <a href="../posts/">看全部手记 →</a>
+    </p>
+
+    <!-- ==================== 九、还没做的 ==================== -->
+    <div class="section-head">
+      <h2>九、还没做的</h2>
+      <span>写在最显眼的地方</span>
+    </div>
+
+    <ul style="font-size:14.5px;color:var(--text-soft);line-height:1.9;max-width:760px;margin:0;padding-left:22px">
+      <li>
+        <strong>没飞过。</strong>所有验证都是吊装地面状态。振动、气流、供电波动、
+        桨叶下洗流对风机的影响，完全是另一套输入。
+      </li>
+      <li>
+        <strong>行程没量准。</strong><code>--rod-timeout</code> 现在按 12 秒给，
+        真实全行程秒数还没掐表测过——这个数是唯一的依据。
+      </li>
+      <li>
+        <strong>硬件兜底没装。</strong>限位开关 + 继电器还是纸上的方案。
+      </li>
+      <li>
+        <strong>没和飞行状态联动。</strong>现在的逻辑不知道飞机是在飞还是在地上，
+        "离板面多近才允许开风机"这类判断还没进去。
+      </li>
+    </ul>
+
+  </div>
+
+</main>
+
+<footer class="site-footer">
+  <div class="wrap-wide">
+    <span>qikai-lab · 嵌入式与物联网</span>
+    <span>最近更新：2026-11-14</span>
+  </div>
+</footer>
+
+</body>
+</html>

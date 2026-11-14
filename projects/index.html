@@ -37,7 +37,7 @@
       <h1>项目</h1>
       <p>
         每个项目一个独立页面：先讲清楚它是什么、长什么样、怎么接线、怎么验证，
-        再往下才是按时间写的开发手记。分类留给以后——现在只有一类，但结构先摆好。
+        再往下才是按时间写的开发手记。分类目前落在物联网和嵌入式两类上，结构先摆好，以后再加。
       </p>
     </div>
   </section>
@@ -46,7 +46,7 @@
 
     <div class="section-head">
       <h2>全部项目</h2>
-      <span id="count-label">1 个进行中 · 1 个筹备中</span>
+      <span id="count-label">2 个进行中 · 1 个筹备中</span>
     </div>
 
     <div class="filter-bar" id="filter-bar">
@@ -81,6 +81,33 @@
             <span>10 篇手记</span>
             <span>·</span>
             <span>串口实测 1.000 帧/秒</span>
+          </div>
+        </div>
+      </a>
+
+      <a class="project-card" href="leidianniao-drone.html" data-cat="embedded iot">
+        <div class="project-cover">
+          <img src="../assets/img/drone-side.jpg" alt="雷电鸟无人机侧面，机臂下方挂载可伸缩的涵道风机组件">
+        </div>
+        <div class="project-body">
+          <div class="post-card-top">
+            <span class="tag done">地面联调通过</span>
+            <span class="tag">无人机</span>
+            <span class="tag">PX4</span>
+            <span class="tag">MAVLink</span>
+          </div>
+          <h3>雷电鸟：100 kg 级光伏清洗无人机</h3>
+          <p>
+            新疆光伏电站缺水不能水洗，改成挂两台涵道风机贴板面吹。飞控做唯一 PWM 输出者，
+            RK3588 经以太网发执行器指令，遥控器随时夺权、松手即停。
+            含示波器实测证据、三档量化、超时防堵转。
+          </p>
+          <div class="project-meta">
+            <span>2026-11-11 → 11-13</span>
+            <span>·</span>
+            <span>5 篇手记</span>
+            <span>·</span>
+            <span>未飞</span>
           </div>
         </div>
       </a>
@@ -129,7 +156,7 @@
           </tr>
           <tr>
             <td><strong>嵌入式</strong></td>
-            <td>裸机驱动、协议栈、固件这类靠近硬件的东西</td>
+            <td>裸机驱动、协议栈、固件、飞控执行器链路这类靠近硬件的东西</td>
             <td>只在开发板上点灯的不算</td>
           </tr>
           <tr>
@@ -153,7 +180,7 @@
 <footer class="site-footer">
   <div class="wrap-wide">
     <span>qikai-lab · 嵌入式与物联网</span>
-    <span>最近更新：2026-10-30</span>
+    <span>最近更新：2026-11-14</span>
   </div>
 </footer>
 
@@ -181,7 +208,7 @@
     });
 
     label.textContent = cat === 'all'
-      ? '1 个进行中 · 1 个筹备中'
+      ? '2 个进行中 · 1 个筹备中'
       : '筛选出 ' + shown + ' 个';
   });
 })();
